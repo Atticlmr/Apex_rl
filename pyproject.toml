@@ -1,6 +1,6 @@
 [project]
-name = "apex-rl"
-version = "0.1.0"
+name = "ApexRL"
+version = "0.0.1"
 description = "A Reinforcement Learning lib"
 readme = "README.md"
 license = {text = "Apache-2.0"}
