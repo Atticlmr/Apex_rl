@@ -1,8 +1,3 @@
-# Copyright (c) 2025 ApexRL Team
-# All rights reserved.
-#
-# SPDX-License-Identifier: MIT
-
 """Vectorized environment base class for efficient RL training.
 
 This module provides an abstract base class for vectorized environments,
