@@ -1,2 +1,2 @@
 def hello() -> str:
-    return "Hello from apex-rl!"
+    return "Hello from ApexRl!"

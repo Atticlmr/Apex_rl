@@ -1,2 +1,5 @@
-def hello() -> str:
-    return "Hello from apex-rl!"
+"""Environment module for ApexRL."""
+
+from apexrl.envs.vecenv import DummyVecEnv, VecEnv, VecEnvWrapper
+
+__all__ = ["VecEnv", "VecEnvWrapper", "DummyVecEnv"]
