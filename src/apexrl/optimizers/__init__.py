@@ -31,7 +31,7 @@ def get_optimizer(name: str):
     """Get optimizer class by name.
 
     Args:
-        name: Name of the optimizer ("adam", "adamw", "muon").
+        name: Name of the optimizer ("adam", "adamw", "muon(remain testing)").
 
     Returns:
         Optimizer class.

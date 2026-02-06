@@ -165,14 +165,15 @@ class VecEnv(ABC):
         # Default implementation: subclasses should override for efficiency
         return None
 
-    def get_privileged_observations(self) -> Union[torch.Tensor, None]:
+    @staticmethod
+    def get_privileged_observations() -> Union[torch.Tensor, None]:
         """Return privileged observations (e.g., for critic).
 
         Returns:
             Privileged observations tensor or None if not supported.
             Shape: (num_envs, num_privileged_obs)
         """
-        return self.privileged_obs_buf
+        return None
 
     def get_state(self) -> Dict[str, Any]:
         """Get the current state of the environment (for checkpointing).
