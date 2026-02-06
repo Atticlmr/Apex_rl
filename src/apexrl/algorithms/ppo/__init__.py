@@ -50,11 +50,9 @@ Custom Network Example:
 
 from apexrl.algorithms.ppo.config import PPOConfig, PPOStorageConfig
 from apexrl.algorithms.ppo.ppo import PPO
-from apexrl.algorithms.ppo.rollout_buffer import RolloutBuffer
 
 __all__ = [
     "PPO",
     "PPOConfig",
     "PPOStorageConfig",
-    "RolloutBuffer",
 ]

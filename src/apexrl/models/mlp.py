@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 from gymnasium import spaces
 
-from apexrl.models.base import ContinuousActor, Critic
+from apexrl.models.base import ContinuousActor, Critic, DiscreteActor
 
 
 def build_mlp(
@@ -478,3 +478,101 @@ class CNNCritic(Critic):
     def get_value(self, obs: torch.Tensor) -> torch.Tensor:
         """Get value estimates."""
         return self.forward(obs)
+
+
+class MLPDiscreteActor(DiscreteActor):
+    """MLP-based discrete action actor.
+
+    Simple MLP that outputs Categorical action distribution.
+
+    Example:
+        >>> from gymnasium import spaces
+        >>> import torch
+        >>>
+        >>> obs_space = spaces.Box(low=-1, high=1, shape=(4,))
+        >>> action_space = spaces.Discrete(2)
+        >>>
+        >>> actor = MLPDiscreteActor(obs_space, action_space, {
+        ...     "hidden_dims": [256, 256],
+        ...     "activation": "elu",
+        ... })
+        >>>
+        >>> obs = torch.randn(32, 4)  # batch_size=32
+        >>> actions, log_probs = actor.act(obs)
+        >>> print(actions.shape)  # [32]
+    """
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Discrete,
+        cfg: Optional[Dict[str, Any]] = None,
+    ):
+        """Initialize MLP Discrete Actor.
+
+        Args:
+            obs_space: Observation space.
+            action_space: Discrete action space.
+            cfg: Configuration dict with keys:
+                - hidden_dims: List of hidden layer sizes (default: [256, 256])
+                - activation: Activation function (default: "elu")
+                - layer_norm: Use layer norm (default: False)
+        """
+        super().__init__(obs_space, action_space, cfg)
+
+        # Get config with defaults
+        hidden_dims = cfg.get("hidden_dims", [256, 256]) if cfg else [256, 256]
+        activation = cfg.get("activation", "elu") if cfg else "elu"
+        layer_norm = cfg.get("layer_norm", False) if cfg else False
+
+        # Build network
+        if isinstance(obs_space, spaces.Box):
+            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
+        else:
+            raise NotImplementedError(
+                f"MLPDiscreteActor only supports Box obs space, got {type(obs_space)}"
+            )
+
+        self.mlp = build_mlp(
+            input_dim=obs_dim,
+            hidden_dims=hidden_dims,
+            output_dim=self.num_actions,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module: nn.Module) -> None:
+        """Initialize network weights."""
+        if isinstance(module, nn.Linear):
+            nn.init.orthogonal_(module.weight, gain=1.0)
+            if module.bias is not None:
+                nn.init.constant_(module.bias, 0.0)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """Forward pass to get action logits.
+
+        Args:
+            obs: Observations. Shape: (batch_size, *obs_shape)
+
+        Returns:
+            Action logits. Shape: (batch_size, num_actions)
+        """
+        # Flatten if needed
+        if obs.dim() > 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        return self.mlp(obs)
+
+    def get_action_dist(self, obs: torch.Tensor) -> torch.distributions.Categorical:
+        """Get Categorical action distribution.
+
+        Args:
+            obs: Observations.
+
+        Returns:
+            Categorical distribution.
+        """
+        logits = self.forward(obs)
+        return torch.distributions.Categorical(logits=logits)

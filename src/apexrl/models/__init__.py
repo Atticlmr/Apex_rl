@@ -6,6 +6,7 @@ from apexrl.models.mlp import (
     CNNCritic,
     MLPActor,
     MLPCritic,
+    MLPDiscreteActor,
     build_mlp,
 )
 
@@ -18,6 +19,7 @@ __all__ = [
     # MLP implementations
     "MLPActor",
     "MLPCritic",
+    "MLPDiscreteActor",
     "build_mlp",
     # CNN implementations
     "CNNActor",

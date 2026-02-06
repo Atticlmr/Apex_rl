@@ -19,9 +19,9 @@ from torch.utils.tensorboard import SummaryWriter
 from gymnasium import spaces
 
 from apexrl.algorithms.ppo.config import PPOConfig
-from apexrl.algorithms.ppo.rollout_buffer import RolloutBuffer
+from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.vecenv import VecEnv
-from apexrl.models.base import Actor, ContinuousActor, Critic
+from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
 from apexrl.optimizers import get_optimizer
 
 
@@ -158,9 +158,9 @@ class PPO:
             )
 
         # Verify actor type
-        if not isinstance(self.actor, (ContinuousActor,)):
+        if not isinstance(self.actor, (ContinuousActor, DiscreteActor)):
             raise TypeError(
-                f"PPO currently only supports ContinuousActor, got {type(self.actor)}"
+                f"PPO currently only supports ContinuousActor or DiscreteActor, got {type(self.actor)}"
             )
 
         # Get action dimension
@@ -168,6 +168,8 @@ class PPO:
             self.action_dim = (
                 self.action_space.shape[0] if len(self.action_space.shape) > 0 else 1
             )
+        elif isinstance(self.action_space, spaces.Discrete):
+            self.action_dim = 1  # Discrete actions are single integers
         else:
             raise NotImplementedError(
                 f"Action space {type(self.action_space)} not supported"

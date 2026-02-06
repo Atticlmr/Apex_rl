@@ -1,5 +1,5 @@
 [project]
-name = "ApexRL"
+name = "apexrl"
 version = "0.0.1"
 description = "A Reinforcement Learning lib"
 readme = "README.md"
