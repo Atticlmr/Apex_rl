@@ -1,3 +1,16 @@
+# Copyright (c) 2026 GitHub@Apex_rl Developer
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """PPO (Proximal Policy Optimization) algorithm implementation.
 
 Supports custom Actor and Critic networks defined by users.
@@ -10,8 +23,9 @@ References:
 
 from __future__ import annotations
 
+import collections
 import time
-from typing import Any, Dict, Optional, Tuple, Type
+from typing import Callable, Any, Deque, Dict, Optional, Tuple, Type
 
 import torch
 import torch.nn as nn
@@ -222,6 +236,10 @@ class PPO:
         self.episode_rewards = []
         self.episode_lengths = []
 
+        # Loss history vs iteration (fixed size deque to prevent memory leak)
+        self.loss_history: Optional[Dict[str, Deque]] = None
+        self.loss_history_maxlen: int = 1000
+
     def _get_obs_shape(self, obs_space: Optional[spaces.Space]) -> Tuple[int, ...]:
         """Get observation shape from space."""
         if obs_space is None:
@@ -237,8 +255,18 @@ class PPO:
                 f"Observation space {type(obs_space)} not supported"
             )
 
-    def collect_rollout(self) -> Dict[str, float]:
+    def collect_rollout(
+        self,
+        extras_callback: Optional[
+            Callable[[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor], None]
+        ] = None,
+    ) -> Dict[str, float]:
         """Collect a rollout from the environment.
+
+        Args:
+            extras_callback: Optional callback function called after each step with
+                (extras, dones, true_dones, episode_rewards) to process environment
+                extras such as reward components and custom metrics.
 
         Returns:
             Dictionary of rollout statistics.
@@ -295,7 +323,13 @@ class PPO:
 
             # Check for timeouts
             time_outs = extras.get("time_outs", torch.zeros_like(dones))
+            if isinstance(time_outs, torch.Tensor):
+                time_outs = time_outs.to(self.device)
             true_dones = dones & ~time_outs
+
+            # Call extras callback if provided (for reward components logging)
+            if extras_callback is not None:
+                extras_callback(extras, dones, true_dones, episode_rewards)
 
             # Log completed episodes
             if true_dones.any():
@@ -325,11 +359,16 @@ class PPO:
 
         # Compute returns and advantages
         with torch.no_grad():
+            # Get privileged observations (avoid duplicate calls)
+            if self.cfg.use_asymmetric:
+                last_privileged_obs = self.env.get_privileged_observations()
+                if last_privileged_obs is not None:
+                    last_privileged_obs = last_privileged_obs.to(self.device)
+            else:
+                last_privileged_obs = None
+
             last_values = self.critic.get_value(
-                self.env.get_privileged_observations().to(self.device)
-                if self.cfg.use_asymmetric
-                and self.env.get_privileged_observations() is not None
-                else obs
+                last_privileged_obs if last_privileged_obs is not None else obs
             )
 
         self.rollout_buffer.compute_returns_and_advantages(
@@ -390,15 +429,14 @@ class PPO:
         num_updates = 0
 
         # Update for multiple epochs
+        early_stopped = False
         for epoch in range(self.cfg.num_epochs):
             # Shuffle indices
             indices = torch.randperm(batch_size, device=self.device)
 
             # Minibatch updates
             for start in range(0, batch_size, minibatch_size):
-                end = start + minibatch_size
-                if end > batch_size:
-                    continue
+                end = min(start + minibatch_size, batch_size)
 
                 mb_indices = indices[start:end]
 
@@ -453,10 +491,18 @@ class PPO:
                     + self.cfg.ent_coef * entropy_loss
                 )
 
-                # Optimization step
+                # Optimization step with gradient norm tracking (before clipping)
                 if self.optimizer is not None:
                     self.optimizer.zero_grad()
                     loss.backward()
+                    # Compute unclipped gradient norm for logging
+                    actor_grad_norm_unclipped = nn.utils.clip_grad_norm_(
+                        self.actor.parameters(), float("inf")
+                    )
+                    critic_grad_norm_unclipped = nn.utils.clip_grad_norm_(
+                        self.critic.parameters(), float("inf")
+                    )
+                    # Apply actual gradient clipping
                     nn.utils.clip_grad_norm_(
                         list(self.actor.parameters()) + list(self.critic.parameters()),
                         self.cfg.max_grad_norm,
@@ -467,6 +513,14 @@ class PPO:
                     self.policy_optimizer.zero_grad()
                     self.value_optimizer.zero_grad()
                     loss.backward()
+                    # Compute unclipped gradient norm for logging
+                    actor_grad_norm_unclipped = nn.utils.clip_grad_norm_(
+                        self.actor.parameters(), float("inf")
+                    )
+                    critic_grad_norm_unclipped = nn.utils.clip_grad_norm_(
+                        self.critic.parameters(), float("inf")
+                    )
+                    # Apply actual gradient clipping
                     nn.utils.clip_grad_norm_(
                         self.actor.parameters(), self.cfg.max_grad_norm
                     )
@@ -478,7 +532,9 @@ class PPO:
 
                 # Metrics
                 with torch.no_grad():
-                    approx_kl = ((ratio - 1) - torch.log(ratio)).mean()
+                    # Clamp ratio for numerical stability in KL computation
+                    ratio_clamped = torch.clamp(ratio, min=1e-8, max=10.0)
+                    approx_kl = ((ratio_clamped - 1) - torch.log(ratio_clamped)).mean()
                     clip_fraction = (
                         ((ratio - 1).abs() > self.cfg.clip_range).float().mean()
                     )
@@ -490,14 +546,48 @@ class PPO:
                 total_clip_fraction += clip_fraction.item()
                 num_updates += 1
 
+                # Accumulate gradient norms
+                if num_updates == 1:
+                    total_actor_grad_norm = actor_grad_norm_unclipped
+                    total_critic_grad_norm = critic_grad_norm_unclipped
+                else:
+                    total_actor_grad_norm += actor_grad_norm_unclipped
+                    total_critic_grad_norm += critic_grad_norm_unclipped
+
+                # Early stopping on KL divergence
+                if (
+                    self.cfg.target_kl is not None
+                    and approx_kl.item() > self.cfg.target_kl
+                ):
+                    early_stopped = True
+                    break
+
+            if early_stopped:
+                break
+
         # Average metrics
+        avg_policy_loss = total_policy_loss / num_updates
+        avg_value_loss = total_value_loss / num_updates
+        avg_entropy_loss = total_entropy_loss / num_updates
+        avg_approx_kl = total_approx_kl / num_updates
+        avg_clip_fraction = total_clip_fraction / num_updates
+
+        # Average gradient norms
+        avg_actor_grad_norm = (total_actor_grad_norm / num_updates).item()
+        avg_critic_grad_norm = (total_critic_grad_norm / num_updates).item()
+        avg_total_grad_norm = (avg_actor_grad_norm**2 + avg_critic_grad_norm**2) ** 0.5
+
         stats = {
-            "train/policy_loss": total_policy_loss / num_updates,
-            "train/value_loss": total_value_loss / num_updates,
-            "train/entropy_loss": total_entropy_loss / num_updates,
-            "train/approx_kl": total_approx_kl / num_updates,
-            "train/clip_fraction": total_clip_fraction / num_updates,
+            "train/policy_loss": avg_policy_loss,
+            "train/value_loss": avg_value_loss,
+            "train/entropy_loss": avg_entropy_loss,
+            "train/approx_kl": avg_approx_kl,
+            "train/clip_fraction": avg_clip_fraction,
             "train/learning_rate": self.get_current_lr(),
+            "train/actor_grad_norm": avg_actor_grad_norm,
+            "train/critic_grad_norm": avg_critic_grad_norm,
+            "train/total_grad_norm": avg_total_grad_norm,
+            "train/early_stopped": float(early_stopped),
         }
 
         return stats
@@ -541,14 +631,41 @@ class PPO:
                     self.cfg.value_learning_rate / self.cfg.learning_rate
                 )
 
-    def learn(self, total_timesteps: int) -> None:
+    def learn(self, total_timesteps: Optional[int] = None) -> None:
         """Train the agent.
 
         Args:
             total_timesteps: Total number of timesteps to train for.
+                Ignored if max_iterations is set in config.
         """
-        num_iterations = total_timesteps // (self.cfg.num_steps * self.num_envs)
+        # Determine number of iterations
+        if self.cfg.max_iterations is not None:
+            num_iterations = self.cfg.max_iterations
+            print(
+                f"Training for {num_iterations} iterations (max_iterations from config)"
+            )
+        elif total_timesteps is not None:
+            num_iterations = total_timesteps // (self.cfg.num_steps * self.num_envs)
+            print(
+                f"Training for {num_iterations} iterations (derived from {total_timesteps} timesteps)"
+            )
+        else:
+            raise ValueError("Either total_timesteps or cfg.max_iterations must be set")
+
         start_time = time.time()
+
+        # Initialize history tracking for losses vs iteration (fixed size deque)
+        self.loss_history = {
+            "iterations": collections.deque(maxlen=self.loss_history_maxlen),
+            "policy_loss": collections.deque(maxlen=self.loss_history_maxlen),
+            "value_loss": collections.deque(maxlen=self.loss_history_maxlen),
+            "entropy_loss": collections.deque(maxlen=self.loss_history_maxlen),
+            "approx_kl": collections.deque(maxlen=self.loss_history_maxlen),
+            "clip_fraction": collections.deque(maxlen=self.loss_history_maxlen),
+            "actor_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
+            "critic_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
+            "total_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
+        }
 
         for iteration in range(num_iterations):
             self.iteration = iteration
@@ -558,6 +675,57 @@ class PPO:
 
             # Update policy
             update_stats = self.update()
+
+            # Record loss history vs iteration (deque auto-manages size)
+            self.loss_history["iterations"].append(iteration)
+            self.loss_history["policy_loss"].append(update_stats["train/policy_loss"])
+            self.loss_history["value_loss"].append(update_stats["train/value_loss"])
+            self.loss_history["entropy_loss"].append(
+                update_stats.get("train/entropy_loss", 0)
+            )
+            self.loss_history["approx_kl"].append(
+                update_stats.get("train/approx_kl", 0)
+            )
+            self.loss_history["clip_fraction"].append(
+                update_stats.get("train/clip_fraction", 0)
+            )
+            self.loss_history["actor_grad_norm"].append(
+                update_stats.get("train/actor_grad_norm", 0)
+            )
+            self.loss_history["critic_grad_norm"].append(
+                update_stats.get("train/critic_grad_norm", 0)
+            )
+            self.loss_history["total_grad_norm"].append(
+                update_stats.get("train/total_grad_norm", 0)
+            )
+
+            # Log additional detailed stats to tensorboard immediately
+            if self.writer and iteration % self.cfg.log_interval == 0:
+                # Log advantage and value distribution stats
+                advantages = self.rollout_buffer.advantages
+                values = self.rollout_buffer.values
+                returns = self.rollout_buffer.returns
+
+                self.writer.add_scalar(
+                    "advantage/mean", advantages.mean().item(), iteration
+                )
+                self.writer.add_scalar(
+                    "advantage/std", advantages.std().item(), iteration
+                )
+                self.writer.add_scalar(
+                    "advantage/min", advantages.min().item(), iteration
+                )
+                self.writer.add_scalar(
+                    "advantage/max", advantages.max().item(), iteration
+                )
+
+                self.writer.add_scalar("value/mean", values.mean().item(), iteration)
+                self.writer.add_scalar("value/std", values.std().item(), iteration)
+                self.writer.add_scalar("value/min", values.min().item(), iteration)
+                self.writer.add_scalar("value/max", values.max().item(), iteration)
+
+                self.writer.add_scalar("returns/mean", returns.mean().item(), iteration)
+                self.writer.add_scalar("returns/std", returns.std().item(), iteration)
 
             # Adjust learning rate
             self.adjust_learning_rate(iteration, num_iterations)
@@ -583,6 +751,48 @@ class PPO:
                 for key, value in update_stats.items():
                     self.writer.add_scalar(key, value, self.total_timesteps)
 
+                # Also log with iteration as x-axis for easier analysis
+                self.writer.add_scalar(
+                    "train_vs_iter/policy_loss",
+                    update_stats["train/policy_loss"],
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/value_loss",
+                    update_stats["train/value_loss"],
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/entropy_loss",
+                    update_stats.get("train/entropy_loss", 0),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/approx_kl",
+                    update_stats.get("train/approx_kl", 0),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/clip_fraction",
+                    update_stats.get("train/clip_fraction", 0),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/actor_grad_norm",
+                    update_stats.get("train/actor_grad_norm", 0),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/critic_grad_norm",
+                    update_stats.get("train/critic_grad_norm", 0),
+                    iteration,
+                )
+                self.writer.add_scalar(
+                    "train_vs_iter/total_grad_norm",
+                    update_stats.get("train/total_grad_norm", 0),
+                    iteration,
+                )
+
                 # Log episode stats
                 if self.episode_rewards:
                     mean_reward = sum(self.episode_rewards) / len(self.episode_rewards)
@@ -593,6 +803,13 @@ class PPO:
                     self.writer.add_scalar(
                         "episode/mean_length", mean_length, self.total_timesteps
                     )
+                    # Also log with iteration
+                    self.writer.add_scalar(
+                        "episode_vs_iter/mean_reward", mean_reward, iteration
+                    )
+                    self.writer.add_scalar(
+                        "episode_vs_iter/mean_length", mean_length, iteration
+                    )
                     self.episode_rewards.clear()
                     self.episode_lengths.clear()
 
@@ -601,7 +818,9 @@ class PPO:
                     f"Timesteps {self.total_timesteps} | "
                     f"FPS {fps:.0f} | "
                     f"Policy Loss {update_stats['train/policy_loss']:.4f} | "
-                    f"Value Loss {update_stats['train/value_loss']:.4f}"
+                    f"Value Loss {update_stats['train/value_loss']:.4f} | "
+                    f"Grad Norm {update_stats.get('train/total_grad_norm', 0):.4f} | "
+                    f"KL {update_stats.get('train/approx_kl', 0):.4f}"
                 )
 
             # Save checkpoint
