@@ -630,7 +630,13 @@ class PPO:
 
     def load(self, path: str) -> None:
         """Load model checkpoint."""
-        checkpoint = torch.load(path, map_location=self.device)
+        # PyTorch 2.6+ changed weights_only default to True
+        # We need to handle both old and new behavior
+        try:
+            checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        except TypeError:
+            # Older PyTorch versions don't have weights_only parameter
+            checkpoint = torch.load(path, map_location=self.device)
         self.actor.load_state_dict(checkpoint["actor_state_dict"])
         self.critic.load_state_dict(checkpoint["critic_state_dict"])
 
