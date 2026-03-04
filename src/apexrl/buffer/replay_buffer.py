@@ -11,20 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2026 GitHub@Apex_rl Developer
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Replay buffer for DQN algorithm.
+"""Replay buffer for Off-policy RL algorithms.
 
 Supports multi-dimensional observations (e.g., images) and flexible storage.
 """
@@ -37,7 +24,7 @@ import torch
 
 
 class ReplayBuffer:
-    """Buffer for storing replay data during DQN training.
+    """Buffer for storing replay data during Off-policy RL training.
 
     Stores transitions (observations, actions, rewards, dones, values, log_probs)
     and computes advantages using Generalized Advantage Estimation (GAE).
@@ -54,30 +41,28 @@ class ReplayBuffer:
     def __init__(
         self,
         num_envs: int,
-        num_steps: int,
+        capacity: int,
         obs_shape: Tuple[int, ...],
+        action_dim: int,
         device: torch.device,
-        num_privileged_obs: int = 0,
     ):
-        """Initialize the rollout buffer.
+        """Initialize the replay buffer.
 
         Args:
             num_envs: Number of parallel environments.
-            num_steps: Number of steps per rollout (n_steps in PPO).
+            capacity: Maximum number of transitions to store in the buffer.
             obs_shape: Shape of observations (e.g., (48,) for vectors, (3, 84, 84) for images).
             device: Device for tensors.
-            num_privileged_obs: Dimension of privileged observations (for asymmetric critic).
         """
         self.num_envs = num_envs
-        self.num_steps = num_steps
+        self.capacity = capacity
         self.obs_shape = obs_shape
         self.device = device
-        self.num_privileged_obs = num_privileged_obs
 
         # Buffers for rollout data
         # Shape: (num_steps, num_envs, *obs_shape)
         self.observations = torch.zeros(
-            (num_steps, num_envs, *obs_shape),
+            (capacity, num_envs, *obs_shape),
             device=device,
             dtype=torch.float32,
         )
