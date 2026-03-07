@@ -33,9 +33,12 @@ class ReplayBuffer:
 
     Attributes:
         num_envs (int): Number of parallel environments.
-        num_steps (int): Number of steps per rollout (horizon).
+        capacity (int): Maximum number of transitions to store in the buffer.
         obs_shape (tuple): Shape of observations (can be multi-dimensional).
+        action_dim (int): Dimension of the action space.
         device (torch.device): Device for tensors.
+        is_priority (bool): Whether to use prioritized experience replay.
+        full (bool): Whether the buffer is full.
     """
 
     def __init__(
@@ -45,6 +48,7 @@ class ReplayBuffer:
         obs_shape: Tuple[int, ...],
         action_dim: int,
         device: torch.device,
+        is_priority: bool = False,
     ):
         """Initialize the replay buffer.
 
@@ -52,20 +56,41 @@ class ReplayBuffer:
             num_envs: Number of parallel environments.
             capacity: Maximum number of transitions to store in the buffer.
             obs_shape: Shape of observations (e.g., (48,) for vectors, (3, 84, 84) for images).
+            action_dim: Dimension of the action space.
             device: Device for tensors.
+            is_priority: Whether to use prioritized experience replay.
         """
         self.num_envs = num_envs
         self.capacity = capacity
         self.obs_shape = obs_shape
+        self.action_dim = action_dim
         self.device = device
+        self.is_priority = is_priority
 
-        # Buffers for rollout data
-        # Shape: (num_steps, num_envs, *obs_shape)
+        # Buffers for replay data
+        # Shape: (num_steps, *obs_shape)
         self.observations = torch.zeros(
-            (capacity, num_envs, *obs_shape),
-            device=device,
-            dtype=torch.float32,
+            (capacity, *obs_shape), device=device, dtype=torch.float32,
         )
+
+        self.next_observations = torch.zeros(
+            (capacity, *obs_shape), dtype=torch.float32, device=device,
+        )
+
+        self.actions = torch.zeros(
+            (capacity, action_dim), dtype=torch.float32, device=device,
+        )
+
+        self.rewards = torch.zeros(
+            capacity, device=device, dtype=torch.float32, 
+        )
+
+        self.dones = torch.zeros(
+            capacity, device=device, dtype=torch.float32, 
+        )
+
+        self.pos = 0
+        self.full = False
 
         # Privileged observations buffer (if using asymmetric critic)
         if num_privileged_obs > 0:
