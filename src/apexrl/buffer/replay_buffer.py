@@ -68,7 +68,7 @@ class ReplayBuffer:
         self.is_priority = is_priority
 
         # Buffers for replay data
-        # Shape: (num_steps, *obs_shape)
+        # Shape: (capacity, *obs_shape)
         self.observations = torch.zeros(
             (capacity, *obs_shape), device=device, dtype=torch.float32,
         )
@@ -89,69 +89,41 @@ class ReplayBuffer:
             capacity, device=device, dtype=torch.float32, 
         )
 
+        # Buffer pointer & size
         self.pos = 0
+        self.size = 0
         self.full = False
 
-        # Privileged observations buffer (if using asymmetric critic)
-        if num_privileged_obs > 0:
-            self.privileged_observations = torch.zeros(
-                (num_steps, num_envs, num_privileged_obs),
-                device=device,
-                dtype=torch.float32,
+        if is_priority:
+            self.priorities = torch.zeros(
+                capacity, device=device, dtype=torch.float32,
             )
-        else:
-            self.privileged_observations = None
-
-        # Action buffer (supports multi-dimensional actions)
-        # Shape will be determined by action_dim
-        self.actions: torch.Tensor = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-        self.rewards = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-        self.dones = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-        self.values = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-        self.log_probs = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-
-        # Advantages and returns (computed after rollout)
-        self.advantages = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-        self.returns = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
-        )
-
-        # Current step index
-        self.step = 0
+            self.alpha = 0.6
+            self.beta = 0.4
+            self.beta_increment = 1e-4
+            self.eps = 1e-6
 
     def add(
         self,
         observations: torch.Tensor,
-        privileged_observations: Optional[torch.Tensor],
         actions: torch.Tensor,
         rewards: torch.Tensor,
+        next_observations: torch.Tensor,
         dones: torch.Tensor,
-        values: torch.Tensor,
-        log_probs: torch.Tensor,
-    ) -> None:
-        """Add a transition to the buffer.
+    ):
+        """Add a transition to the replay buffer.
 
         Args:
             observations: Observations. Shape: (num_envs, *obs_shape)
-            privileged_observations: Privileged observations. Shape: (num_envs, priv_obs_dim) or None
             actions: Actions. Shape: (num_envs, action_dim) or (num_envs,)
             rewards: Rewards. Shape: (num_envs,)
+            next_observations: Next observations. Shape: (num_envs, *obs_shape)
             dones: Done flags. Shape: (num_envs,)
-            values: Value estimates. Shape: (num_envs,)
-            log_probs: Log probabilities of actions. Shape: (num_envs,)
         """
+        n = self.num_envs
+        start = self.pos
+        end = self.pos + n
+        
         if self.step >= self.num_steps:
             raise ValueError(f"Rollout buffer is full (capacity: {self.num_steps})")
 
@@ -169,135 +141,21 @@ class ReplayBuffer:
 
         self.step += 1
 
-    def compute_returns_and_advantages(
-        self,
-        last_values: torch.Tensor,
-        gamma: float = 0.99,
-        gae_lambda: float = 0.95,
-    ) -> None:
-        """Compute returns and advantages using GAE.
-
-        Args:
-            last_values: Value estimates for the last observations. Shape: (num_envs,)
-            gamma: Discount factor.
-            gae_lambda: GAE lambda parameter for advantage estimation.
-        """
-        advantages = torch.zeros_like(self.rewards)
-        last_gae = torch.zeros(self.num_envs, device=self.device)
-
-        # Compute GAE backwards
-        for t in reversed(range(self.num_steps)):
-            if t == self.num_steps - 1:
-                next_values = last_values
-                next_non_terminal = 1.0 - self.dones[t]
-            else:
-                next_values = self.values[t + 1]
-                next_non_terminal = 1.0 - self.dones[t]
-
-            # TD error: delta = r + gamma * V(s') - V(s)
-            delta = (
-                self.rewards[t]
-                + gamma * next_values * next_non_terminal
-                - self.values[t]
-            )
-
-            # GAE: A_t = delta_t + gamma * lambda * A_{t+1}
-            last_gae = delta + gamma * gae_lambda * next_non_terminal * last_gae
-            advantages[t] = last_gae
-
-        # Store advantages and returns
-        self.advantages = advantages
-        self.returns = advantages + self.values
-
-    def get_all_data(self) -> Dict[str, torch.Tensor]:
-        """Get all data from the buffer (flattened).
-
-        Returns:
-            Dictionary containing all rollout data with flattened batch dimensions.
-        """
-        # Total number of transitions
-        total_transitions = self.num_steps * self.num_envs
-
-        # Flatten time and env dimensions for observations
-        # (num_steps, num_envs, *obs_shape) -> (total_transitions, *obs_shape)
-        flat_obs = self.observations.reshape(total_transitions, *self.obs_shape)
-
-        # Flatten privileged observations
-        if self.privileged_observations is not None:
-            flat_privileged_obs = self.privileged_observations.reshape(
-                total_transitions, self.num_privileged_obs
-            )
-        else:
-            flat_privileged_obs = None
-
-        # Flatten other tensors (they have shape (num_steps, num_envs, ...))
-        # Handle actions which might be multi-dimensional
-        if self.actions.dim() > 2:
-            # Multi-dimensional actions: (num_steps, num_envs, action_dim)
-            flat_actions = self.actions.reshape(total_transitions, -1)
-        else:
-            # Single-dimensional actions: (num_steps, num_envs)
-            flat_actions = self.actions.reshape(total_transitions)
-
-        return {
-            "observations": flat_obs,
-            "privileged_observations": flat_privileged_obs,
-            "actions": flat_actions,
-            "old_log_probs": self.log_probs.reshape(total_transitions),
-            "advantages": self.advantages.reshape(total_transitions),
-            "returns": self.returns.reshape(total_transitions),
-            "values": self.values.reshape(total_transitions),
-        }
-
-    def get_minibatch(
-        self,
-        batch_size: int,
-    ) -> Tuple[torch.Tensor, ...]:
-        """Get a random minibatch from the buffer.
-
-        Args:
-            batch_size: Size of the minibatch.
-
-        Returns:
-            Tuple containing:
-                - observations: (batch_size, *obs_shape)
-                - privileged_observations: (batch_size, priv_obs_dim) or None
-                - actions: (batch_size,) or (batch_size, action_dim)
-                - old_log_probs: (batch_size,)
-                - advantages: (batch_size,)
-                - returns: (batch_size,)
-                - values: (batch_size,)
-        """
-        # Get all flattened data
-        data = self.get_all_data()
-        total_transitions = self.num_steps * self.num_envs
-
-        # Random indices
-        indices = torch.randint(0, total_transitions, (batch_size,), device=self.device)
-
-        obs = data["observations"][indices]
-        privileged_obs = (
-            data["privileged_observations"][indices]
-            if data["privileged_observations"] is not None
-            else None
-        )
-        actions = data["actions"][indices]
-        old_log_probs = data["old_log_probs"][indices]
-        advantages = data["advantages"][indices]
-        returns = data["returns"][indices]
-        values = data["values"][indices]
-
-        return obs, privileged_obs, actions, old_log_probs, advantages, returns, values
-
     def clear(self) -> None:
-        """Clear the buffer and reset step counter."""
-        self.step = 0
+        """Clear the buffer."""
+
+        self.pos = 0
+        self.size = 0
+        self.full = False
+
+        if self.is_priority:
+            self.priorities.zero_()
 
     def __len__(self) -> int:
         """Return the number of transitions stored."""
         return self.step * self.num_envs
 
-    def to(self, device: torch.device) -> "RolloutBuffer":
+    def to(self, device: torch.device) -> "ReplayBuffer":
         """Move all tensors to a new device.
 
         Args:
