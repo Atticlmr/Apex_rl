@@ -23,8 +23,6 @@ References:
 
 from __future__ import annotations
 
-import collections
-import time
 from typing import Callable, Any, Deque, Dict, Optional, Tuple, Type
 
 import torch
@@ -140,6 +138,10 @@ class PPO:
             self.action_space = getattr(actor, "action_space", None)
         elif actor_class is not None and critic_class is not None:
             # Instantiate from classes
+            if obs_space is None:
+                obs_space = getattr(env, "observation_space_gym", None)
+            if action_space is None:
+                action_space = getattr(env, "action_space_gym", None)
             if obs_space is None or action_space is None:
                 raise ValueError(
                     "obs_space and action_space are required when using actor_class/critic_class"
@@ -147,12 +149,14 @@ class PPO:
 
             self.obs_space = obs_space
             self.action_space = action_space
+            actor_cfg = self._build_actor_cfg(actor_cfg)
+            critic_cfg = self._build_critic_cfg(critic_cfg)
 
             # Create actor
             self.actor = actor_class(
                 obs_space=obs_space,
                 action_space=action_space,
-                cfg=actor_cfg or {},
+                cfg=actor_cfg,
             ).to(self.device)
 
             # Create critic (may use privileged obs if asymmetric)
@@ -163,7 +167,7 @@ class PPO:
             )
             self.critic = critic_class(
                 obs_space=critic_obs_space,
-                cfg=critic_cfg or {},
+                cfg=critic_cfg,
             ).to(self.device)
         else:
             raise ValueError(
@@ -182,8 +186,12 @@ class PPO:
             self.action_dim = (
                 self.action_space.shape[0] if len(self.action_space.shape) > 0 else 1
             )
+            self.action_shape = self.action_space.shape
+            self.action_dtype = torch.float32
         elif isinstance(self.action_space, spaces.Discrete):
             self.action_dim = 1  # Discrete actions are single integers
+            self.action_shape = ()
+            self.action_dtype = torch.long
         else:
             raise NotImplementedError(
                 f"Action space {type(self.action_space)} not supported"
@@ -220,6 +228,8 @@ class PPO:
             num_envs=self.num_envs,
             num_steps=self.cfg.num_steps,
             obs_shape=self.obs_shape,
+            action_shape=self.action_shape,
+            action_dtype=self.action_dtype,
             device=self.device,
             num_privileged_obs=getattr(env, "num_privileged_obs", 0)
             if self.cfg.use_asymmetric
@@ -250,6 +260,9 @@ class PPO:
     def _get_obs_shape(self, obs_space: Optional[spaces.Space]) -> Tuple[int, ...]:
         """Get observation shape from space."""
         if obs_space is None:
+            obs_buf = getattr(self.env, "obs_buf", None)
+            if obs_buf is not None:
+                return tuple(obs_buf.shape[1:])
             # Try to infer from env
             if hasattr(self.env, "num_obs"):
                 return (self.env.num_obs,)
@@ -261,6 +274,37 @@ class PPO:
             raise NotImplementedError(
                 f"Observation space {type(obs_space)} not supported"
             )
+
+    def _build_actor_cfg(
+        self, actor_cfg: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge PPO config defaults into actor configuration."""
+        merged = {
+            "hidden_dims": list(self.cfg.actor_hidden_dims),
+            "activation": self.cfg.activation,
+            "layer_norm": self.cfg.layer_norm,
+            "learn_std": not self.cfg.fixed_std,
+            "init_std": self.cfg.std_value,
+            "use_tanh_squash": self.cfg.use_tanh_squash,
+            "min_log_std": self.cfg.min_log_std,
+            "max_log_std": self.cfg.max_log_std,
+        }
+        if actor_cfg:
+            merged.update(actor_cfg)
+        return merged
+
+    def _build_critic_cfg(
+        self, critic_cfg: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge PPO config defaults into critic configuration."""
+        merged = {
+            "hidden_dims": list(self.cfg.critic_hidden_dims),
+            "activation": self.cfg.activation,
+            "layer_norm": self.cfg.layer_norm,
+        }
+        if critic_cfg:
+            merged.update(critic_cfg)
+        return merged
 
     def collect_rollout(
         self,
@@ -283,12 +327,7 @@ class PPO:
         self.rollout_buffer.clear()
 
         # Get initial observations
-        obs = self.env.get_observations()
-        if hasattr(obs, "get"):  # TensorDict
-            obs = obs["obs"]
-        elif isinstance(obs, tuple):
-            obs = obs[0]
-        obs = obs.to(self.device)
+        obs = self._to_tensor_observation(self.env.get_observations())
 
         episode_rewards = torch.zeros(self.num_envs, device=self.device)
         episode_lengths = torch.zeros(self.num_envs, device=self.device)
@@ -316,31 +355,40 @@ class PPO:
 
             # Step environment
             next_obs, rewards, dones, extras = self.env.step(actions)
-            if hasattr(next_obs, "get"):  # TensorDict
-                next_obs = next_obs["obs"]
-            elif isinstance(next_obs, tuple):
-                next_obs = next_obs[0]
-            next_obs = next_obs.to(self.device)
+            next_obs = self._to_tensor_observation(next_obs)
             rewards = rewards.to(self.device)
-            dones = dones.to(self.device)
+            dones = dones.to(self.device).bool()
 
             # Track episode stats
             episode_rewards += rewards
             episode_lengths += 1
 
-            # Check for timeouts
-            time_outs = extras.get("time_outs", torch.zeros_like(dones))
-            if isinstance(time_outs, torch.Tensor):
-                time_outs = time_outs.to(self.device)
-            true_dones = dones & ~time_outs
+            terminated = extras.get("terminated", None)
+            truncated = extras.get("truncated", extras.get("time_outs", None))
+            if terminated is None:
+                terminated = dones
+                if isinstance(truncated, torch.Tensor):
+                    terminated = dones & ~truncated.to(self.device).bool()
+            terminated = self._to_bool_tensor(terminated, dones)
+            truncated = self._to_bool_tensor(truncated, dones, default=False)
+            episode_ends = dones
+
+            if truncated.any():
+                final_obs = extras.get("final_observation")
+                if final_obs is not None:
+                    final_obs = self._to_tensor_observation(final_obs)
+                    with torch.no_grad():
+                        final_values = self.critic.get_value(final_obs[truncated])
+                    rewards = rewards.clone()
+                    rewards[truncated] += self.cfg.gamma * final_values
 
             # Call extras callback if provided (for reward components logging)
             if extras_callback is not None:
-                extras_callback(extras, dones, true_dones, episode_rewards)
+                extras_callback(extras, episode_ends, terminated, episode_rewards)
 
             # Log completed episodes
-            if true_dones.any():
-                completed_indices = torch.where(true_dones)[0]
+            if episode_ends.any():
+                completed_indices = torch.where(episode_ends)[0]
                 for idx in completed_indices:
                     self.episode_rewards.append(episode_rewards[idx].item())
                     self.episode_lengths.append(episode_lengths[idx].item())
@@ -348,8 +396,8 @@ class PPO:
                     completed_episodes += 1
 
                 # Reset episode tracking for completed envs
-                episode_rewards = episode_rewards * (~true_dones).float()
-                episode_lengths = episode_lengths * (~true_dones).float()
+                episode_rewards = episode_rewards * (~episode_ends).float()
+                episode_lengths = episode_lengths * (~episode_ends).float()
 
             # Store transition
             self.rollout_buffer.add(
@@ -357,7 +405,7 @@ class PPO:
                 privileged_observations=privileged_obs,
                 actions=actions,
                 rewards=rewards,
-                dones=dones.float(),
+                dones=episode_ends.float(),
                 values=values,
                 log_probs=log_probs,
             )
@@ -404,6 +452,29 @@ class PPO:
             stats["rollout/completed_episodes"] = completed_episodes
 
         return stats
+
+    def _to_tensor_observation(self, obs: Any) -> torch.Tensor:
+        """Normalize environment observations to tensors on the training device."""
+        if hasattr(obs, "get"):
+            obs = obs["obs"]
+        elif isinstance(obs, tuple):
+            obs = obs[0]
+        if not isinstance(obs, torch.Tensor):
+            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        return obs.to(self.device)
+
+    def _to_bool_tensor(
+        self,
+        value: Any,
+        reference: torch.Tensor,
+        default: bool = True,
+    ) -> torch.Tensor:
+        """Normalize boolean masks from environment extras."""
+        if value is None:
+            return torch.full_like(reference, default, dtype=torch.bool)
+        if not isinstance(value, torch.Tensor):
+            value = torch.as_tensor(value, device=self.device)
+        return value.to(self.device).bool()
 
     def update(self) -> Dict[str, float]:
         """Update policy and value function using collected rollout data.
@@ -638,191 +709,73 @@ class PPO:
                     self.cfg.value_learning_rate / self.cfg.learning_rate
                 )
 
-    def learn(self, total_timesteps: Optional[int] = None) -> None:
-        """Train the agent.
+    def learn(self, total_timesteps: Optional[int] = None) -> Dict[str, Any]:
+        """Train through the canonical OnPolicyRunner entrypoint."""
+        from apexrl.agent.on_policy_runner import OnPolicyRunner
 
-        Args:
-            total_timesteps: Total number of timesteps to train for.
-                Ignored if max_iterations is set in config.
-        """
-        # Determine number of iterations
-        if self.cfg.max_iterations is not None:
-            num_iterations = self.cfg.max_iterations
-            print(
-                f"Training for {num_iterations} iterations (max_iterations from config)"
-            )
-        elif total_timesteps is not None:
-            num_iterations = total_timesteps // (self.cfg.num_steps * self.num_envs)
-            print(
-                f"Training for {num_iterations} iterations (derived from {total_timesteps} timesteps)"
-            )
-        else:
-            raise ValueError("Either total_timesteps or cfg.max_iterations must be set")
+        runner = OnPolicyRunner(
+            agent=self,
+            env=self.env,
+            cfg=self.cfg,
+            log_dir=None,
+            save_dir=self.log_dir,
+            device=self.device,
+        )
+        return runner.learn(total_timesteps=total_timesteps)
 
-        start_time = time.time()
+    def _log_scalars(self, scalars: Dict[str, float], step: int) -> None:
+        """Log a batch of scalar metrics when available."""
+        if self.logger and scalars:
+            self.logger.log_scalars(scalars, step)
 
-        # Initialize history tracking for losses vs iteration (fixed size deque)
-        self.loss_history = {
-            "iterations": collections.deque(maxlen=self.loss_history_maxlen),
-            "policy_loss": collections.deque(maxlen=self.loss_history_maxlen),
-            "value_loss": collections.deque(maxlen=self.loss_history_maxlen),
-            "entropy_loss": collections.deque(maxlen=self.loss_history_maxlen),
-            "approx_kl": collections.deque(maxlen=self.loss_history_maxlen),
-            "clip_fraction": collections.deque(maxlen=self.loss_history_maxlen),
-            "actor_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
-            "critic_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
-            "total_grad_norm": collections.deque(maxlen=self.loss_history_maxlen),
+    def _get_rollout_metrics_for_logging(
+        self, rollout_stats: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Drop rollout metrics that are duplicated elsewhere in the same log step."""
+        metrics = dict(rollout_stats)
+        if self.episode_rewards:
+            metrics.pop("rollout/mean_episode_reward", None)
+        return metrics
+
+    def _get_train_iteration_metrics(
+        self, update_stats: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Return optional train/* metrics on an iteration-based x-axis."""
+        if not self.cfg.log_train_metrics_vs_iteration:
+            return {}
+        return {
+            key.replace("train/", "train_vs_iter/"): value
+            for key, value in update_stats.items()
+            if key.startswith("train/")
         }
 
-        for iteration in range(num_iterations):
-            self.iteration = iteration
+    def _get_episode_iteration_metrics(
+        self, mean_reward: float, mean_length: float
+    ) -> Dict[str, float]:
+        """Return optional episode/* metrics on an iteration-based x-axis."""
+        if not self.cfg.log_episode_metrics_vs_iteration:
+            return {}
+        return {
+            "episode_vs_iter/mean_reward": mean_reward,
+            "episode_vs_iter/mean_length": mean_length,
+        }
 
-            # Collect rollout
-            rollout_stats = self.collect_rollout()
+    def _get_detailed_rollout_stats(self) -> Dict[str, float]:
+        """Return optional rollout distribution statistics."""
+        if not self.cfg.log_detailed_rollout_stats:
+            return {}
 
-            # Update policy
-            update_stats = self.update()
-
-            # Record loss history vs iteration (deque auto-manages size)
-            self.loss_history["iterations"].append(iteration)
-            self.loss_history["policy_loss"].append(update_stats["train/policy_loss"])
-            self.loss_history["value_loss"].append(update_stats["train/value_loss"])
-            self.loss_history["entropy_loss"].append(
-                update_stats.get("train/entropy_loss", 0)
-            )
-            self.loss_history["approx_kl"].append(
-                update_stats.get("train/approx_kl", 0)
-            )
-            self.loss_history["clip_fraction"].append(
-                update_stats.get("train/clip_fraction", 0)
-            )
-            self.loss_history["actor_grad_norm"].append(
-                update_stats.get("train/actor_grad_norm", 0)
-            )
-            self.loss_history["critic_grad_norm"].append(
-                update_stats.get("train/critic_grad_norm", 0)
-            )
-            self.loss_history["total_grad_norm"].append(
-                update_stats.get("train/total_grad_norm", 0)
-            )
-
-            # Log additional detailed stats to logger immediately
-            if self.logger and iteration % self.cfg.log_interval == 0:
-                # Log advantage and value distribution stats
-                advantages = self.rollout_buffer.advantages
-                values = self.rollout_buffer.values
-                returns = self.rollout_buffer.returns
-
-                self.logger.log_scalar("advantage/mean", advantages.mean().item(), iteration)
-                self.logger.log_scalar("advantage/std", advantages.std().item(), iteration)
-                self.logger.log_scalar("advantage/min", advantages.min().item(), iteration)
-                self.logger.log_scalar("advantage/max", advantages.max().item(), iteration)
-
-                self.logger.log_scalar("value/mean", values.mean().item(), iteration)
-                self.logger.log_scalar("value/std", values.std().item(), iteration)
-                self.logger.log_scalar("value/min", values.min().item(), iteration)
-                self.logger.log_scalar("value/max", values.max().item(), iteration)
-
-                self.logger.log_scalar("returns/mean", returns.mean().item(), iteration)
-                self.logger.log_scalar("returns/std", returns.std().item(), iteration)
-
-            # Adjust learning rate
-            self.adjust_learning_rate(iteration, num_iterations)
-
-            # Logging
-            if self.logger and iteration % self.cfg.log_interval == 0:
-                fps = (
-                    self.cfg.num_steps
-                    * self.num_envs
-                    * self.cfg.log_interval
-                    / (time.time() - start_time)
-                )
-                start_time = time.time()
-
-                self.logger.log_scalar("time/fps", fps, self.total_timesteps)
-                self.logger.log_scalar("time/iterations", iteration, self.total_timesteps)
-
-                for key, value in rollout_stats.items():
-                    self.logger.log_scalar(key, value, self.total_timesteps)
-
-                for key, value in update_stats.items():
-                    self.logger.log_scalar(key, value, self.total_timesteps)
-
-                # Also log with iteration as x-axis for easier analysis
-                self.logger.log_scalar(
-                    "train_vs_iter/policy_loss",
-                    update_stats["train/policy_loss"],
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/value_loss",
-                    update_stats["train/value_loss"],
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/entropy_loss",
-                    update_stats.get("train/entropy_loss", 0),
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/approx_kl",
-                    update_stats.get("train/approx_kl", 0),
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/clip_fraction",
-                    update_stats.get("train/clip_fraction", 0),
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/actor_grad_norm",
-                    update_stats.get("train/actor_grad_norm", 0),
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/critic_grad_norm",
-                    update_stats.get("train/critic_grad_norm", 0),
-                    iteration,
-                )
-                self.logger.log_scalar(
-                    "train_vs_iter/total_grad_norm",
-                    update_stats.get("train/total_grad_norm", 0),
-                    iteration,
-                )
-
-                # Log episode stats
-                if self.episode_rewards:
-                    mean_reward = sum(self.episode_rewards) / len(self.episode_rewards)
-                    mean_length = sum(self.episode_lengths) / len(self.episode_lengths)
-                    self.logger.log_scalar(
-                        "episode/mean_reward", mean_reward, self.total_timesteps
-                    )
-                    self.logger.log_scalar(
-                        "episode/mean_length", mean_length, self.total_timesteps
-                    )
-                    # Also log with iteration
-                    self.logger.log_scalar(
-                        "episode_vs_iter/mean_reward", mean_reward, iteration
-                    )
-                    self.logger.log_scalar(
-                        "episode_vs_iter/mean_length", mean_length, iteration
-                    )
-                    self.episode_rewards.clear()
-                    self.episode_lengths.clear()
-
-                print(
-                    f"Iteration {iteration}/{num_iterations} | "
-                    f"Timesteps {self.total_timesteps} | "
-                    f"FPS {fps:.0f} | "
-                    f"Policy Loss {update_stats['train/policy_loss']:.4f} | "
-                    f"Value Loss {update_stats['train/value_loss']:.4f} | "
-                    f"Grad Norm {update_stats.get('train/total_grad_norm', 0):.4f} | "
-                    f"KL {update_stats.get('train/approx_kl', 0):.4f}"
-                )
-
-            # Save checkpoint
-            if iteration % self.cfg.save_interval == 0:
-                self.save(f"checkpoint_{iteration}.pt")
+        advantages = self.rollout_buffer.advantages
+        values = self.rollout_buffer.values
+        returns = self.rollout_buffer.returns
+        return {
+            "advantage/mean": advantages.mean().item(),
+            "advantage/std": advantages.std().item(),
+            "value/mean": values.mean().item(),
+            "value/std": values.std().item(),
+            "returns/mean": returns.mean().item(),
+            "returns/std": returns.std().item(),
+        }
 
     def save(self, path: str) -> None:
         """Save model checkpoint."""
@@ -875,12 +828,7 @@ class PPO:
         self.actor.eval()
         self.critic.eval()
 
-        obs = self.env.reset()
-        if hasattr(obs, "get"):
-            obs = obs["obs"]
-        elif isinstance(obs, tuple):
-            obs = obs[0]
-        obs = obs.to(self.device)
+        obs = self._to_tensor_observation(self.env.reset())
 
         episode_rewards = []
         current_rewards = torch.zeros(self.num_envs, device=self.device)
@@ -891,11 +839,7 @@ class PPO:
                 actions, _ = self.actor.act(obs, deterministic=True)
 
             next_obs, rewards, dones, _ = self.env.step(actions)
-            if hasattr(next_obs, "get"):
-                next_obs = next_obs["obs"]
-            elif isinstance(next_obs, tuple):
-                next_obs = next_obs[0]
-            next_obs = next_obs.to(self.device)
+            next_obs = self._to_tensor_observation(next_obs)
             rewards = rewards.to(self.device)
             dones = dones.to(self.device)
 

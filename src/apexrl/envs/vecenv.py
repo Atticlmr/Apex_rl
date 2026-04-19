@@ -26,7 +26,16 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple, Union
 
 import torch
-from tensordict import TensorDict
+
+try:
+    from tensordict import TensorDict
+except ImportError:  # pragma: no cover - optional dependency
+    class TensorDict(dict):
+        """Fallback TensorDict-compatible container used when tensordict is unavailable."""
+
+        def __init__(self, data: Dict[str, Any], batch_size: Any = None):
+            super().__init__(data)
+            self.batch_size = batch_size
 
 
 class VecEnv(ABC):
@@ -208,8 +217,10 @@ class VecEnv(ABC):
         Returns:
             Dictionary containing observation space shape and dtype.
         """
+        obs_buf = getattr(self, "obs_buf", None)
+        obs_shape = tuple(obs_buf.shape[1:]) if obs_buf is not None else (self.num_obs,)
         return {
-            "shape": (self.num_obs,),
+            "shape": obs_shape,
             "dtype": torch.float32,
         }
 
@@ -276,6 +287,8 @@ class VecEnvWrapper(VecEnv):
         self.num_privileged_obs = getattr(env, "num_privileged_obs", 0)
         self.max_episode_length = env.max_episode_length
         self.device = env.device
+        self.observation_space_gym = getattr(env, "observation_space_gym", None)
+        self.action_space_gym = getattr(env, "action_space_gym", None)
 
     def get_observations(
         self,
@@ -408,6 +421,9 @@ class DummyVecEnv(VecEnv):
 
         extras = {
             "time_outs": time_outs,
+            "terminated": torch.zeros_like(time_outs),
+            "truncated": time_outs,
+            "final_observation": self.obs_buf.clone(),
             "log": {
                 "/reward/mean": self.rew_buf.mean().item(),
                 "/episode_length/mean": self.episode_length_buf.float().mean().item(),

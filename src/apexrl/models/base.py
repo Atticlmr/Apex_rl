@@ -213,8 +213,8 @@ class ContinuousActor(Actor, ABC):
         # Continuous action info
         self.action_dim = action_space.shape[0] if len(action_space.shape) > 0 else 1
 
-        # Tanh squashing flag (default True for bounded actions)
-        self.use_tanh_squash = cfg.get("use_tanh_squash", True) if cfg else True
+        # PPO is typically more stable with unclipped Gaussian sampling plus env-side clipping.
+        self.use_tanh_squash = cfg.get("use_tanh_squash", False) if cfg else False
 
     @abstractmethod
     def get_action_dist(

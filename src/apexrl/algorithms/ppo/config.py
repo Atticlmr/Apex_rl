@@ -68,6 +68,11 @@ class PPOConfig:
         # Logging
         log_interval: Interval for logging (in iterations).
         save_interval: Interval for saving checkpoints (in iterations).
+        log_train_metrics_vs_iteration: Whether to duplicate train/* metrics on an
+            iteration-based x-axis.
+        log_episode_metrics_vs_iteration: Whether to duplicate episode/* metrics on
+            an iteration-based x-axis.
+        log_detailed_rollout_stats: Whether to log extra rollout distribution stats.
 
         # Device
         device: Device to use ("cuda", "cpu", "auto").
@@ -111,6 +116,9 @@ class PPOConfig:
     layer_norm: bool = False
     fixed_std: bool = True
     std_value: float = 1.0
+    use_tanh_squash: bool = False
+    min_log_std: float = -5.0
+    max_log_std: float = 2.0
     use_asymmetric: bool = False
 
     # Optimizer
@@ -130,6 +138,9 @@ class PPOConfig:
     # Logging
     log_interval: int = 10
     save_interval: int = 100
+    log_train_metrics_vs_iteration: bool = False
+    log_episode_metrics_vs_iteration: bool = False
+    log_detailed_rollout_stats: bool = False
     logger_backend: Union[str, List[str]] = "tensorboard"  # "tensorboard", "wandb", "swanlab", or list
     logger_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for logger
 

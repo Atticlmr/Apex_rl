@@ -110,8 +110,8 @@ class OnPolicyRunner:
         device: Optional[torch.device] = None,
         # Configuration
         log_reward_components: bool = True,
-        log_interval: int = 10,
-        save_interval: int = 100,
+        log_interval: Optional[int] = None,
+        save_interval: Optional[int] = None,
     ):
         """Initialize the on-policy runner.
 
@@ -136,8 +136,8 @@ class OnPolicyRunner:
             save_dir: Directory for checkpoints. Defaults to log_dir.
             device: Device for training. Auto-detects if None.
             log_reward_components: Whether to log reward components from extras.
-            log_interval: Logging interval in iterations.
-            save_interval: Checkpoint saving interval.
+            log_interval: Logging interval in iterations. Defaults to cfg.log_interval.
+            save_interval: Checkpoint saving interval. Defaults to cfg.save_interval.
 
         Raises:
             ValueError: If neither agent nor (actor_class, critic_class, spaces) provided.
@@ -189,10 +189,20 @@ class OnPolicyRunner:
                 log_dir=self.log_dir,
                 **logger_kwargs
             )
+        elif hasattr(self.agent, "logger") and self.agent.logger is not None:
+            self.logger = self.agent.logger
 
         # Configuration
-        self.log_interval = log_interval
-        self.save_interval = save_interval
+        self.log_interval = (
+            log_interval
+            if log_interval is not None
+            else getattr(self.cfg, "log_interval", 10)
+        )
+        self.save_interval = (
+            save_interval
+            if save_interval is not None
+            else getattr(self.cfg, "save_interval", 100)
+        )
         self.log_reward_components = log_reward_components
 
         # Training state
@@ -280,6 +290,8 @@ class OnPolicyRunner:
             raise ValueError(
                 f"actor_class and critic_class are required when creating {algorithm} agent"
             )
+        obs_space = obs_space or getattr(env, "observation_space_gym", None)
+        action_space = action_space or getattr(env, "action_space_gym", None)
         if obs_space is None or action_space is None:
             raise ValueError(
                 f"obs_space and action_space are required when creating {algorithm} agent"
@@ -349,8 +361,8 @@ class OnPolicyRunner:
     def _process_extras(
         self,
         extras: Dict[str, Any],
-        dones: torch.Tensor,
-        true_dones: torch.Tensor,
+        episode_ends: torch.Tensor,
+        terminated: torch.Tensor,
         episode_rewards: torch.Tensor,
     ) -> None:
         """Process environment extras to extract and log metrics.
@@ -362,8 +374,8 @@ class OnPolicyRunner:
 
         Args:
             extras: Extras dict from env.step().
-            dones: All done flags (including timeouts).
-            true_dones: True done flags (excluding timeouts).
+            episode_ends: Episode end flags (including timeouts).
+            terminated: True terminal flags (excluding timeouts).
             episode_rewards: Current episode reward accumulator.
         """
         # === Process custom metrics from extras["log"] ===
@@ -388,23 +400,23 @@ class OnPolicyRunner:
         if self.log_reward_components:
             reward_components = extras.get("reward_components")
             if reward_components:
-                self._accumulate_reward_components(reward_components, true_dones)
+                self._accumulate_reward_components(reward_components, episode_ends)
 
     def _accumulate_reward_components(
         self,
         components: Dict[str, torch.Tensor],
-        true_dones: torch.Tensor,
+        episode_ends: torch.Tensor,
     ) -> None:
         """Accumulate reward components per episode.
 
         For each reward component:
         1. Accumulate step-level values during the episode
-        2. When episode ends (true_dones), store the total
+        2. When episode ends, store the total
         3. Reset accumulator for completed episodes
 
         Args:
             components: Dict of {component_name: step_reward_tensor}.
-            true_dones: Bool tensor indicating completed episodes.
+            episode_ends: Bool tensor indicating completed episodes.
         """
         for name, values in components.items():
             # Ensure tensor
@@ -423,8 +435,8 @@ class OnPolicyRunner:
             self.current_reward_components[key] += values
 
             # Handle completed episodes
-            if true_dones.any():
-                completed_indices = torch.where(true_dones)[0]
+            if episode_ends.any():
+                completed_indices = torch.where(episode_ends)[0]
                 completed_values = self.current_reward_components[key][
                     completed_indices
                 ]
@@ -437,7 +449,7 @@ class OnPolicyRunner:
                     self.reward_components[key].append(float(val))
 
                 # Reset accumulators for completed episodes
-                self.current_reward_components[key] *= (~true_dones).float()
+                self.current_reward_components[key] *= (~episode_ends).float()
 
     def update(self) -> Dict[str, float]:
         """Update policy using collected rollout."""
@@ -631,34 +643,20 @@ class OnPolicyRunner:
         if not self.logger:
             return
 
-        # Time metrics
-        self.logger.log_scalar("time/fps", fps, self.total_timesteps)
-        self.logger.log_scalar("time/iteration", iteration, self.total_timesteps)
-
-        # Rollout stats (vs timesteps)
-        for key, value in rollout_stats.items():
-            self.logger.log_scalar(key, value, self.total_timesteps)
-
-        # Training stats (vs both timesteps and iteration)
-        for key, value in update_stats.items():
-            self.logger.log_scalar(key, value, self.total_timesteps)
-            # Also log with iteration for easier analysis
-            iter_key = key.replace("train/", "train_vs_iter/")
-            self.logger.log_scalar(iter_key, value, iteration)
-
-        # Distribution stats
-        advantages = self.agent.rollout_buffer.advantages
-        values = self.agent.rollout_buffer.values
-        returns = self.agent.rollout_buffer.returns
-
-        self.logger.log_scalar(
-            "stats/advantage_mean", advantages.mean().item(), iteration
+        self._log_scalars({"time/fps": fps}, self.total_timesteps)
+        self._log_scalars(
+            self._get_rollout_metrics_for_logging(rollout_stats),
+            self.total_timesteps,
         )
-        self.logger.log_scalar(
-            "stats/advantage_std", advantages.std().item(), iteration
+        self._log_scalars(update_stats, self.total_timesteps)
+        self._log_scalars(
+            self._get_train_iteration_metrics(update_stats),
+            iteration,
         )
-        self.logger.log_scalar("stats/value_mean", values.mean().item(), iteration)
-        self.logger.log_scalar("stats/returns_mean", returns.mean().item(), iteration)
+        self._log_scalars(
+            self._get_detailed_rollout_stats(),
+            iteration,
+        )
 
         # Episode stats
         if self.agent.episode_rewards:
@@ -669,17 +667,16 @@ class OnPolicyRunner:
                 self.agent.episode_lengths
             )
 
-            self.logger.log_scalar(
-                "episode/mean_reward", mean_reward, self.total_timesteps
+            self._log_scalars(
+                {
+                    "episode/mean_reward": mean_reward,
+                    "episode/mean_length": mean_length,
+                },
+                self.total_timesteps,
             )
-            self.logger.log_scalar(
-                "episode/mean_length", mean_length, self.total_timesteps
-            )
-            self.logger.log_scalar(
-                "episode_vs_iter/mean_reward", mean_reward, iteration
-            )
-            self.logger.log_scalar(
-                "episode_vs_iter/mean_length", mean_length, iteration
+            self._log_scalars(
+                self._get_episode_iteration_metrics(mean_reward, mean_length),
+                iteration,
             )
 
             self.agent.episode_rewards.clear()
@@ -693,23 +690,81 @@ class OnPolicyRunner:
 
     def _log_reward_components(self) -> None:
         """Log accumulated reward components to logger."""
+        reward_metrics = {}
         for key, values in self.reward_components.items():
             if values:
                 mean_val = sum(values) / len(values)
                 # Convert "/reward_component/name" to logger key
                 log_key = f"reward_components/{key.replace('/reward_component/', '')}"
-                self.logger.log_scalar(log_key, mean_val, self.iteration)
+                reward_metrics[log_key] = mean_val
                 values.clear()
+        self._log_scalars(reward_metrics, self.iteration)
 
     def _log_environment_metrics(self) -> None:
         """Log environment-provided metrics from log buffers."""
+        env_metrics = {}
         for key, buffer in self.log_buffers.items():
             if buffer:
                 mean_val = sum(buffer) / len(buffer)
                 # Remove leading "/" for logger key
                 log_key = key[1:] if key.startswith("/") else key
-                self.logger.log_scalar(f"env/{log_key}", mean_val, self.iteration)
+                env_metrics[f"env/{log_key}"] = mean_val
                 buffer.clear()
+        self._log_scalars(env_metrics, self.iteration)
+
+    def _log_scalars(self, scalars: Dict[str, float], step: int) -> None:
+        """Log a batch of scalar metrics when available."""
+        if self.logger and scalars:
+            self.logger.log_scalars(scalars, step)
+
+    def _get_rollout_metrics_for_logging(
+        self, rollout_stats: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Drop rollout metrics that are duplicated elsewhere in the same log step."""
+        metrics = dict(rollout_stats)
+        if self.agent.episode_rewards:
+            metrics.pop("rollout/mean_episode_reward", None)
+        return metrics
+
+    def _get_train_iteration_metrics(
+        self, update_stats: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Return optional train/* metrics on an iteration-based x-axis."""
+        if not getattr(self.cfg, "log_train_metrics_vs_iteration", False):
+            return {}
+        return {
+            key.replace("train/", "train_vs_iter/"): value
+            for key, value in update_stats.items()
+            if key.startswith("train/")
+        }
+
+    def _get_episode_iteration_metrics(
+        self, mean_reward: float, mean_length: float
+    ) -> Dict[str, float]:
+        """Return optional episode/* metrics on an iteration-based x-axis."""
+        if not getattr(self.cfg, "log_episode_metrics_vs_iteration", False):
+            return {}
+        return {
+            "episode_vs_iter/mean_reward": mean_reward,
+            "episode_vs_iter/mean_length": mean_length,
+        }
+
+    def _get_detailed_rollout_stats(self) -> Dict[str, float]:
+        """Return optional rollout distribution statistics."""
+        if not getattr(self.cfg, "log_detailed_rollout_stats", False):
+            return {}
+
+        advantages = self.agent.rollout_buffer.advantages
+        values = self.agent.rollout_buffer.values
+        returns = self.agent.rollout_buffer.returns
+        return {
+            "advantage/mean": advantages.mean().item(),
+            "advantage/std": advantages.std().item(),
+            "value/mean": values.mean().item(),
+            "value/std": values.std().item(),
+            "returns/mean": returns.mean().item(),
+            "returns/std": returns.std().item(),
+        }
 
     def save_checkpoint(self, filename: str) -> None:
         """Save training checkpoint."""

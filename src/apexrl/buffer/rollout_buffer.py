@@ -43,6 +43,8 @@ class RolloutBuffer:
         num_envs: int,
         num_steps: int,
         obs_shape: Tuple[int, ...],
+        action_shape: Tuple[int, ...],
+        action_dtype: torch.dtype,
         device: torch.device,
         num_privileged_obs: int = 0,
     ):
@@ -52,12 +54,16 @@ class RolloutBuffer:
             num_envs: Number of parallel environments.
             num_steps: Number of steps per rollout (n_steps in PPO).
             obs_shape: Shape of observations (e.g., (48,) for vectors, (3, 84, 84) for images).
+            action_shape: Shape of actions. Empty tuple for scalar discrete actions.
+            action_dtype: Data type used to store actions.
             device: Device for tensors.
             num_privileged_obs: Dimension of privileged observations (for asymmetric critic).
         """
         self.num_envs = num_envs
         self.num_steps = num_steps
         self.obs_shape = obs_shape
+        self.action_shape = action_shape
+        self.action_dtype = action_dtype
         self.device = device
         self.num_privileged_obs = num_privileged_obs
 
@@ -79,10 +85,10 @@ class RolloutBuffer:
         else:
             self.privileged_observations = None
 
-        # Action buffer (supports multi-dimensional actions)
-        # Shape will be determined by action_dim
-        self.actions: torch.Tensor = torch.zeros(
-            num_steps, num_envs, device=device, dtype=torch.float32
+        self.actions = torch.zeros(
+            (num_steps, num_envs, *action_shape),
+            device=device,
+            dtype=action_dtype,
         )
         self.rewards = torch.zeros(
             num_steps, num_envs, device=device, dtype=torch.float32
@@ -207,13 +213,9 @@ class RolloutBuffer:
         else:
             flat_privileged_obs = None
 
-        # Flatten other tensors (they have shape (num_steps, num_envs, ...))
-        # Handle actions which might be multi-dimensional
-        if self.actions.dim() > 2:
-            # Multi-dimensional actions: (num_steps, num_envs, action_dim)
-            flat_actions = self.actions.reshape(total_transitions, -1)
+        if self.action_shape:
+            flat_actions = self.actions.reshape(total_transitions, *self.action_shape)
         else:
-            # Single-dimensional actions: (num_steps, num_envs)
             flat_actions = self.actions.reshape(total_transitions)
 
         return {

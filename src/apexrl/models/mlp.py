@@ -19,6 +19,7 @@ Users can use these directly or as templates for custom implementations.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -26,6 +27,26 @@ import torch.nn as nn
 from gymnasium import spaces
 
 from apexrl.models.base import ContinuousActor, Critic, DiscreteActor
+
+
+def _orthogonal_init(module: nn.Module, gain: float) -> None:
+    """Apply orthogonal initialization to linear and convolutional layers."""
+    if isinstance(module, (nn.Linear, nn.Conv2d)):
+        nn.init.orthogonal_(module.weight, gain=gain)
+        if module.bias is not None:
+            nn.init.constant_(module.bias, 0.0)
+
+
+def _init_policy_network(module: nn.Module, output_layer: nn.Module) -> None:
+    """Initialize policy nets with PPO-friendly gains."""
+    module.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
+    _orthogonal_init(output_layer, 0.01)
+
+
+def _init_value_network(module: nn.Module, output_layer: nn.Module) -> None:
+    """Initialize value nets with PPO-friendly gains."""
+    module.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
+    _orthogonal_init(output_layer, 1.0)
 
 
 def build_mlp(
@@ -147,15 +168,7 @@ class MLPActor(ContinuousActor):
             self.register_buffer("std", torch.ones(self.action_dim) * init_std)
             self.log_std = None
 
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module: nn.Module) -> None:
-        """Initialize network weights."""
-        if isinstance(module, nn.Linear):
-            nn.init.orthogonal_(module.weight, gain=1.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
+        _init_policy_network(self, self.mlp[-1])
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass to get action mean.
@@ -182,7 +195,9 @@ class MLPActor(ContinuousActor):
         """
         mean = self.forward(obs)
         if self.log_std is not None:
-            std = torch.exp(self.log_std)
+            min_log_std = self.cfg.get("min_log_std", -5.0)
+            max_log_std = self.cfg.get("max_log_std", 2.0)
+            std = torch.exp(torch.clamp(self.log_std, min_log_std, max_log_std))
         else:
             std = self.std
         return torch.distributions.Normal(mean, std)
@@ -245,15 +260,7 @@ class MLPCritic(Critic):
             layer_norm=layer_norm,
         )
 
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module: nn.Module) -> None:
-        """Initialize network weights."""
-        if isinstance(module, nn.Linear):
-            nn.init.orthogonal_(module.weight, gain=1.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
+        _init_value_network(self, self.mlp[-1])
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass to get value estimates.
@@ -372,14 +379,7 @@ class CNNActor(ContinuousActor):
             self.register_buffer("std", torch.ones(self.action_dim) * init_std)
             self.log_std = None
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module: nn.Module) -> None:
-        """Initialize network weights."""
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
-            nn.init.orthogonal_(module.weight, gain=1.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
+        _init_policy_network(self, self.head[-1])
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass.
@@ -401,7 +401,9 @@ class CNNActor(ContinuousActor):
         """Get Gaussian action distribution."""
         mean = self.forward(obs)
         if self.log_std is not None:
-            std = torch.exp(self.log_std)
+            min_log_std = self.cfg.get("min_log_std", -5.0)
+            max_log_std = self.cfg.get("max_log_std", 2.0)
+            std = torch.exp(torch.clamp(self.log_std, min_log_std, max_log_std))
         else:
             std = self.std
         return torch.distributions.Normal(mean, std)
@@ -464,14 +466,7 @@ class CNNCritic(Critic):
             activation=activation,
         )
 
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module: nn.Module) -> None:
-        """Initialize network weights."""
-        if isinstance(module, (nn.Linear, nn.Conv2d)):
-            nn.init.orthogonal_(module.weight, gain=1.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
+        _init_value_network(self, self.head[-1])
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass to get value estimates.
@@ -554,15 +549,7 @@ class MLPDiscreteActor(DiscreteActor):
             layer_norm=layer_norm,
         )
 
-        # Initialize weights
-        self.apply(self._init_weights)
-
-    def _init_weights(self, module: nn.Module) -> None:
-        """Initialize network weights."""
-        if isinstance(module, nn.Linear):
-            nn.init.orthogonal_(module.weight, gain=1.0)
-            if module.bias is not None:
-                nn.init.constant_(module.bias, 0.0)
+        _init_policy_network(self, self.mlp[-1])
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """Forward pass to get action logits.

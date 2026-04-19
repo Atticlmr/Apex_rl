@@ -65,11 +65,19 @@ class GymVecEnv(VecEnv):
         # Get spaces from first environment
         self._obs_space = self._env.observation_space
         self._act_space = self._env.action_space
+        self.observation_space_gym = self._obs_space
+        self.action_space_gym = self._act_space
 
         # Infer dimensions BEFORE calling super().__init__
         if hasattr(self._obs_space, "shape"):
+            self.obs_shape = (
+                tuple(self._obs_space.shape)
+                if len(self._obs_space.shape) > 0
+                else (1,)
+            )
             self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
         else:
+            self.obs_shape = (1,)
             self.num_obs = 1
 
         if isinstance(self._act_space, gym.spaces.Discrete):
@@ -91,7 +99,9 @@ class GymVecEnv(VecEnv):
         self.device = torch.device(device)
 
         # Initialize buffers
-        self.obs_buf = torch.zeros(self.num_envs, self.num_obs, device=self.device)
+        self.obs_buf = torch.zeros(
+            (self.num_envs, *self.obs_shape), device=self.device
+        )
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -115,7 +125,8 @@ class GymVecEnv(VecEnv):
         """Convert numpy observation to tensor."""
         if isinstance(obs, tuple):
             obs = obs[0]
-        return torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        return obs_tensor.reshape(self.obs_shape)
 
     def reset(self) -> torch.Tensor:
         """Reset all environments."""
@@ -156,6 +167,14 @@ class GymVecEnv(VecEnv):
         """
         actions = actions.cpu().numpy()
 
+        terminated_buf = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        truncated_buf = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        final_obs_buf = torch.zeros_like(self.obs_buf)
+
         for i, env in enumerate(self.envs):
             # Handle discrete vs continuous actions
             if isinstance(self._act_space, gym.spaces.Discrete):
@@ -165,15 +184,19 @@ class GymVecEnv(VecEnv):
 
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
+            obs_tensor = self._obs_to_tensor(obs)
 
-            self.obs_buf[i] = self._obs_to_tensor(obs)
+            self.obs_buf[i] = obs_tensor
             self.rew_buf[i] = float(reward)
             self.reset_buf[i] = done
             self.episode_length_buf[i] += 1
             self._ep_rewards[i] += float(reward)
+            terminated_buf[i] = terminated
+            truncated_buf[i] = truncated
 
             # Track completed episodes
             if done:
+                final_obs_buf[i] = obs_tensor
                 self._completed_episodes.append(self._ep_rewards[i])
                 self._ep_rewards[i] = 0.0
 
@@ -183,11 +206,11 @@ class GymVecEnv(VecEnv):
                 self.obs_buf[i] = self._obs_to_tensor(obs)
                 self.episode_length_buf[i] = 0
 
-        # Check for timeouts
-        time_outs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-
         extras = {
-            "time_outs": time_outs,
+            "time_outs": truncated_buf,
+            "terminated": terminated_buf,
+            "truncated": truncated_buf,
+            "final_observation": final_obs_buf,
             "log": {},
         }
 
@@ -227,6 +250,8 @@ class GymVecEnvContinuous(VecEnv):
         # Get spaces from first environment
         self._obs_space = self._env.observation_space
         self._act_space = self._env.action_space
+        self.observation_space_gym = self._obs_space
+        self.action_space_gym = self._act_space
 
         # Verify continuous action space
         assert isinstance(self._act_space, gym.spaces.Box), (
@@ -235,8 +260,14 @@ class GymVecEnvContinuous(VecEnv):
 
         # Infer dimensions BEFORE calling super().__init__
         if hasattr(self._obs_space, "shape"):
+            self.obs_shape = (
+                tuple(self._obs_space.shape)
+                if len(self._obs_space.shape) > 0
+                else (1,)
+            )
             self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
         else:
+            self.obs_shape = (1,)
             self.num_obs = 1
 
         self.num_actions = (
@@ -262,7 +293,9 @@ class GymVecEnvContinuous(VecEnv):
         )
 
         # Initialize buffers
-        self.obs_buf = torch.zeros(self.num_envs, self.num_obs, device=self.device)
+        self.obs_buf = torch.zeros(
+            (self.num_envs, *self.obs_shape), device=self.device
+        )
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -279,15 +312,10 @@ class GymVecEnvContinuous(VecEnv):
         self.reset()
 
     def _scale_actions(self, actions: torch.Tensor) -> torch.Tensor:
-        """Scale actions from [-1, 1] to environment bounds."""
-        # Assuming input actions are in [-1, 1]
-        scaled = (
-            0.5 * (actions + 1.0) * (self.action_high - self.action_low)
-            + self.action_low
-        )
+        """Clip actions to environment bounds."""
         if self.clip_actions:
-            scaled = torch.clamp(scaled, self.action_low, self.action_high)
-        return scaled
+            return torch.clamp(actions, self.action_low, self.action_high)
+        return actions
 
     def get_observations(self) -> torch.Tensor:
         """Return current observations."""
@@ -297,7 +325,8 @@ class GymVecEnvContinuous(VecEnv):
         """Convert numpy observation to tensor."""
         if isinstance(obs, tuple):
             obs = obs[0]
-        return torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
+        return obs_tensor.reshape(self.obs_shape)
 
     def reset(self) -> torch.Tensor:
         """Reset all environments."""
@@ -336,22 +365,32 @@ class GymVecEnvContinuous(VecEnv):
         Returns:
             Tuple of (observations, rewards, dones, extras).
         """
-        # Scale actions to environment bounds
-        scaled_actions = self._scale_actions(actions)
-        actions_np = scaled_actions.cpu().numpy()
+        clipped_actions = self._scale_actions(actions)
+        actions_np = clipped_actions.cpu().numpy()
+        terminated_buf = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        truncated_buf = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        final_obs_buf = torch.zeros_like(self.obs_buf)
 
         for i, env in enumerate(self.envs):
             obs, reward, terminated, truncated, info = env.step(actions_np[i])
             done = terminated or truncated
+            obs_tensor = self._obs_to_tensor(obs)
 
-            self.obs_buf[i] = self._obs_to_tensor(obs)
+            self.obs_buf[i] = obs_tensor
             self.rew_buf[i] = float(reward)
             self.reset_buf[i] = done
             self.episode_length_buf[i] += 1
             self._ep_rewards[i] += float(reward)
+            terminated_buf[i] = terminated
+            truncated_buf[i] = truncated
 
             # Track completed episodes
             if done:
+                final_obs_buf[i] = obs_tensor
                 self._completed_episodes.append(self._ep_rewards[i])
                 self._ep_rewards[i] = 0.0
 
@@ -361,11 +400,11 @@ class GymVecEnvContinuous(VecEnv):
                 self.obs_buf[i] = self._obs_to_tensor(obs)
                 self.episode_length_buf[i] = 0
 
-        # Check for timeouts
-        time_outs = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-
         extras = {
-            "time_outs": time_outs,
+            "time_outs": truncated_buf,
+            "terminated": terminated_buf,
+            "truncated": truncated_buf,
+            "final_observation": final_obs_buf,
             "log": {},
         }
 
