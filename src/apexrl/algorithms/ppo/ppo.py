@@ -23,18 +23,20 @@ References:
 
 from __future__ import annotations
 
-from typing import Callable, Any, Deque, Dict, Optional, Tuple, Type
+from collections import deque
+from collections.abc import Callable
+from typing import Any
 
 import torch
 import torch.nn as nn
 from gymnasium import spaces
 
 from apexrl.algorithms.ppo.config import PPOConfig
-from apexrl.utils.logger import Logger
 from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.vecenv import VecEnv
 from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
 from apexrl.optimizers import get_optimizer
+from apexrl.utils.logger import Logger
 
 
 class PPO:
@@ -78,17 +80,17 @@ class PPO:
     def __init__(
         self,
         env: VecEnv,
-        cfg: Optional[PPOConfig] = None,
-        actor_class: Optional[Type[Actor]] = None,
-        critic_class: Optional[Type[Critic]] = None,
-        obs_space: Optional[spaces.Space] = None,
-        action_space: Optional[spaces.Space] = None,
-        actor_cfg: Optional[Dict[str, Any]] = None,
-        critic_cfg: Optional[Dict[str, Any]] = None,
-        actor: Optional[Actor] = None,
-        critic: Optional[Critic] = None,
-        log_dir: Optional[str] = None,
-        device: Optional[torch.device] = None,
+        cfg: PPOConfig | None = None,
+        actor_class: type[Actor] | None = None,
+        critic_class: type[Critic] | None = None,
+        obs_space: spaces.Space | None = None,
+        action_space: spaces.Space | None = None,
+        actor_cfg: dict[str, Any] | None = None,
+        critic_cfg: dict[str, Any] | None = None,
+        actor: Actor | None = None,
+        critic: Critic | None = None,
+        log_dir: str | None = None,
+        device: torch.device | None = None,
     ):
         """Initialize PPO algorithm.
 
@@ -144,7 +146,8 @@ class PPO:
                 action_space = getattr(env, "action_space_gym", None)
             if obs_space is None or action_space is None:
                 raise ValueError(
-                    "obs_space and action_space are required when using actor_class/critic_class"
+                    "obs_space and action_space are required when using "
+                    "actor_class/critic_class"
                 )
 
             self.obs_space = obs_space
@@ -178,7 +181,8 @@ class PPO:
         # Verify actor type
         if not isinstance(self.actor, (ContinuousActor, DiscreteActor)):
             raise TypeError(
-                f"PPO currently only supports ContinuousActor or DiscreteActor, got {type(self.actor)}"
+                "PPO currently only supports ContinuousActor or "
+                f"DiscreteActor, got {type(self.actor)}"
             )
 
         # Get action dimension
@@ -244,7 +248,7 @@ class PPO:
                 backend=self.cfg.logger_backend,
                 experiment_name="ppo",
                 log_dir=log_dir,
-                **self.cfg.logger_kwargs
+                **self.cfg.logger_kwargs,
             )
         self.iteration = 0
         self.total_timesteps = 0
@@ -254,10 +258,10 @@ class PPO:
         self.episode_lengths = []
 
         # Loss history vs iteration (fixed size deque to prevent memory leak)
-        self.loss_history: Optional[Dict[str, Deque]] = None
+        self.loss_history: dict[str, deque] | None = None
         self.loss_history_maxlen: int = 1000
 
-    def _get_obs_shape(self, obs_space: Optional[spaces.Space]) -> Tuple[int, ...]:
+    def _get_obs_shape(self, obs_space: spaces.Space | None) -> tuple[int, ...]:
         """Get observation shape from space."""
         if obs_space is None:
             obs_buf = getattr(self.env, "obs_buf", None)
@@ -275,9 +279,7 @@ class PPO:
                 f"Observation space {type(obs_space)} not supported"
             )
 
-    def _build_actor_cfg(
-        self, actor_cfg: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _build_actor_cfg(self, actor_cfg: dict[str, Any] | None) -> dict[str, Any]:
         """Merge PPO config defaults into actor configuration."""
         merged = {
             "hidden_dims": list(self.cfg.actor_hidden_dims),
@@ -293,9 +295,7 @@ class PPO:
             merged.update(actor_cfg)
         return merged
 
-    def _build_critic_cfg(
-        self, critic_cfg: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _build_critic_cfg(self, critic_cfg: dict[str, Any] | None) -> dict[str, Any]:
         """Merge PPO config defaults into critic configuration."""
         merged = {
             "hidden_dims": list(self.cfg.critic_hidden_dims),
@@ -308,10 +308,14 @@ class PPO:
 
     def collect_rollout(
         self,
-        extras_callback: Optional[
-            Callable[[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor], None]
-        ] = None,
-    ) -> Dict[str, float]:
+        extras_callback: (
+            Callable[
+                [dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor],
+                None,
+            ]
+            | None
+        ) = None,
+    ) -> dict[str, float]:
         """Collect a rollout from the environment.
 
         Args:
@@ -476,7 +480,7 @@ class PPO:
             value = torch.as_tensor(value, device=self.device)
         return value.to(self.device).bool()
 
-    def update(self) -> Dict[str, float]:
+    def update(self) -> dict[str, float]:
         """Update policy and value function using collected rollout data.
 
         Returns:
@@ -709,7 +713,7 @@ class PPO:
                     self.cfg.value_learning_rate / self.cfg.learning_rate
                 )
 
-    def learn(self, total_timesteps: Optional[int] = None) -> Dict[str, Any]:
+    def learn(self, total_timesteps: int | None = None) -> dict[str, Any]:
         """Train through the canonical OnPolicyRunner entrypoint."""
         from apexrl.agent.on_policy_runner import OnPolicyRunner
 
@@ -723,14 +727,14 @@ class PPO:
         )
         return runner.learn(total_timesteps=total_timesteps)
 
-    def _log_scalars(self, scalars: Dict[str, float], step: int) -> None:
+    def _log_scalars(self, scalars: dict[str, float], step: int) -> None:
         """Log a batch of scalar metrics when available."""
         if self.logger and scalars:
             self.logger.log_scalars(scalars, step)
 
     def _get_rollout_metrics_for_logging(
-        self, rollout_stats: Dict[str, float]
-    ) -> Dict[str, float]:
+        self, rollout_stats: dict[str, float]
+    ) -> dict[str, float]:
         """Drop rollout metrics that are duplicated elsewhere in the same log step."""
         metrics = dict(rollout_stats)
         if self.episode_rewards:
@@ -738,8 +742,8 @@ class PPO:
         return metrics
 
     def _get_train_iteration_metrics(
-        self, update_stats: Dict[str, float]
-    ) -> Dict[str, float]:
+        self, update_stats: dict[str, float]
+    ) -> dict[str, float]:
         """Return optional train/* metrics on an iteration-based x-axis."""
         if not self.cfg.log_train_metrics_vs_iteration:
             return {}
@@ -751,7 +755,7 @@ class PPO:
 
     def _get_episode_iteration_metrics(
         self, mean_reward: float, mean_length: float
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Return optional episode/* metrics on an iteration-based x-axis."""
         if not self.cfg.log_episode_metrics_vs_iteration:
             return {}
@@ -760,7 +764,7 @@ class PPO:
             "episode_vs_iter/mean_length": mean_length,
         }
 
-    def _get_detailed_rollout_stats(self) -> Dict[str, float]:
+    def _get_detailed_rollout_stats(self) -> dict[str, float]:
         """Return optional rollout distribution statistics."""
         if not self.cfg.log_detailed_rollout_stats:
             return {}
@@ -823,7 +827,7 @@ class PPO:
         self.iteration = checkpoint.get("iteration", 0)
         self.total_timesteps = checkpoint.get("total_timesteps", 0)
 
-    def eval(self, num_episodes: int = 10) -> Dict[str, float]:
+    def eval(self, num_episodes: int = 10) -> dict[str, float]:
         """Evaluate the agent."""
         self.actor.eval()
         self.critic.eval()

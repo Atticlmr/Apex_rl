@@ -19,7 +19,7 @@ vectorized environment interface used by ApexRL algorithms.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any
 
 import gymnasium as gym
 import numpy as np
@@ -48,8 +48,8 @@ class GymVecEnv(VecEnv):
 
     def __init__(
         self,
-        env_fns: List[callable],
-        device: Union[torch.device, str] = "cpu",
+        env_fns: list[callable],
+        device: torch.device | str = "cpu",
     ):
         """Initialize GymVecEnv.
 
@@ -71,9 +71,7 @@ class GymVecEnv(VecEnv):
         # Infer dimensions BEFORE calling super().__init__
         if hasattr(self._obs_space, "shape"):
             self.obs_shape = (
-                tuple(self._obs_space.shape)
-                if len(self._obs_space.shape) > 0
-                else (1,)
+                tuple(self._obs_space.shape) if len(self._obs_space.shape) > 0 else (1,)
             )
             self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
         else:
@@ -99,9 +97,7 @@ class GymVecEnv(VecEnv):
         self.device = torch.device(device)
 
         # Initialize buffers
-        self.obs_buf = torch.zeros(
-            (self.num_envs, *self.obs_shape), device=self.device
-        )
+        self.obs_buf = torch.zeros((self.num_envs, *self.obs_shape), device=self.device)
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -155,7 +151,7 @@ class GymVecEnv(VecEnv):
 
     def step(
         self, actions: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step all environments.
 
         Args:
@@ -170,9 +166,7 @@ class GymVecEnv(VecEnv):
         terminated_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
-        truncated_buf = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
-        )
+        truncated_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         final_obs_buf = torch.zeros_like(self.obs_buf)
 
         for i, env in enumerate(self.envs):
@@ -231,8 +225,8 @@ class GymVecEnvContinuous(VecEnv):
 
     def __init__(
         self,
-        env_fns: List[callable],
-        device: Union[torch.device, str] = "cpu",
+        env_fns: list[callable],
+        device: torch.device | str = "cpu",
         clip_actions: bool = True,
     ):
         """Initialize GymVecEnvContinuous.
@@ -255,15 +249,14 @@ class GymVecEnvContinuous(VecEnv):
 
         # Verify continuous action space
         assert isinstance(self._act_space, gym.spaces.Box), (
-            f"GymVecEnvContinuous requires Box action space, got {type(self._act_space)}"
+            "GymVecEnvContinuous requires Box action space, "
+            f"got {type(self._act_space)}"
         )
 
         # Infer dimensions BEFORE calling super().__init__
         if hasattr(self._obs_space, "shape"):
             self.obs_shape = (
-                tuple(self._obs_space.shape)
-                if len(self._obs_space.shape) > 0
-                else (1,)
+                tuple(self._obs_space.shape) if len(self._obs_space.shape) > 0 else (1,)
             )
             self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
         else:
@@ -293,9 +286,7 @@ class GymVecEnvContinuous(VecEnv):
         )
 
         # Initialize buffers
-        self.obs_buf = torch.zeros(
-            (self.num_envs, *self.obs_shape), device=self.device
-        )
+        self.obs_buf = torch.zeros((self.num_envs, *self.obs_shape), device=self.device)
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -355,7 +346,7 @@ class GymVecEnvContinuous(VecEnv):
 
     def step(
         self, actions: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step all environments.
 
         Args:
@@ -370,9 +361,7 @@ class GymVecEnvContinuous(VecEnv):
         terminated_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
         )
-        truncated_buf = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
-        )
+        truncated_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         final_obs_buf = torch.zeros_like(self.obs_buf)
 
         for i, env in enumerate(self.envs):

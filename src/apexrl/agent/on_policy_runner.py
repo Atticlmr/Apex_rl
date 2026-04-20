@@ -22,10 +22,12 @@ from __future__ import annotations
 import collections
 import os
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Tuple, Type
+from collections.abc import Callable
+from typing import Any
 
 import torch
 from gymnasium import spaces
+
 from apexrl.envs.vecenv import VecEnv
 from apexrl.utils.logger import Logger
 
@@ -60,7 +62,9 @@ class OnPolicyRunner:
         >>> from apexrl.algorithms.ppo import PPO, PPOConfig
         >>>
         >>> cfg = PPOConfig(learning_rate=3e-4)
-        >>> agent = PPO(env=env, cfg=cfg, actor_class=MLPActor, critic_class=MLPCritic, ...)
+        >>> agent = PPO(
+        ...     env=env, cfg=cfg, actor_class=MLPActor, critic_class=MLPCritic, ...
+        ... )
         >>> runner = OnPolicyRunner(agent=agent, env=env, cfg=cfg)
         >>> runner.learn(total_timesteps=10_000_000)
 
@@ -88,30 +92,30 @@ class OnPolicyRunner:
     """
 
     # Registry of supported algorithms
-    ALGORITHMS: Dict[str, Any] = {}
+    ALGORITHMS: dict[str, Any] = {}
 
     def __init__(
         self,
         env: VecEnv,
-        cfg: Optional[Any] = None,
+        cfg: Any | None = None,
         # Algorithm selection (mutually exclusive with agent)
         algorithm: str = "ppo",
-        actor_class: Optional[Type] = None,
-        critic_class: Optional[Type] = None,
-        obs_space: Optional[spaces.Space] = None,
-        action_space: Optional[spaces.Space] = None,
-        actor_cfg: Optional[Dict[str, Any]] = None,
-        critic_cfg: Optional[Dict[str, Any]] = None,
+        actor_class: type | None = None,
+        critic_class: type | None = None,
+        obs_space: spaces.Space | None = None,
+        action_space: spaces.Space | None = None,
+        actor_cfg: dict[str, Any] | None = None,
+        critic_cfg: dict[str, Any] | None = None,
         # Or provide pre-created agent
-        agent: Optional[Any] = None,
+        agent: Any | None = None,
         # Logging and saving
-        log_dir: Optional[str] = None,
-        save_dir: Optional[str] = None,
-        device: Optional[torch.device] = None,
+        log_dir: str | None = None,
+        save_dir: str | None = None,
+        device: torch.device | None = None,
         # Configuration
         log_reward_components: bool = True,
-        log_interval: Optional[int] = None,
-        save_interval: Optional[int] = None,
+        log_interval: int | None = None,
+        save_interval: int | None = None,
     ):
         """Initialize the on-policy runner.
 
@@ -140,7 +144,8 @@ class OnPolicyRunner:
             save_interval: Checkpoint saving interval. Defaults to cfg.save_interval.
 
         Raises:
-            ValueError: If neither agent nor (actor_class, critic_class, spaces) provided.
+            ValueError: If neither agent nor
+                (actor_class, critic_class, spaces) provided.
         """
         self.env = env
         self.device = device or torch.device(
@@ -181,13 +186,13 @@ class OnPolicyRunner:
         self.logger = None
         if self.log_dir:
             # Get logger config from agent's config if available
-            logger_backend = getattr(self.cfg, 'logger_backend', 'tensorboard')
-            logger_kwargs = getattr(self.cfg, 'logger_kwargs', None) or {}
+            logger_backend = getattr(self.cfg, "logger_backend", "tensorboard")
+            logger_kwargs = getattr(self.cfg, "logger_kwargs", None) or {}
             self.logger = Logger.create(
                 backend=logger_backend,
                 experiment_name="on_policy_runner",
                 log_dir=self.log_dir,
-                **logger_kwargs
+                **logger_kwargs,
             )
         elif hasattr(self.agent, "logger") and self.agent.logger is not None:
             self.logger = self.agent.logger
@@ -211,19 +216,19 @@ class OnPolicyRunner:
         self.start_time = None
 
         # Episode-level reward component tracking
-        self.reward_components: Dict[str, List[float]] = {}
-        self.current_reward_components: Dict[str, torch.Tensor] = {}
+        self.reward_components: dict[str, list[float]] = {}
+        self.current_reward_components: dict[str, torch.Tensor] = {}
 
         # Environment metrics log buffers (from extras["log"])
-        self.log_buffers: Dict[str, Deque[float]] = {}
+        self.log_buffers: dict[str, collections.deque[float]] = {}
         self.log_buffer_maxlen = 1000
 
         # Loss history
-        self.loss_history: Optional[Dict[str, Deque]] = None
+        self.loss_history: dict[str, collections.deque] | None = None
         self.loss_history_maxlen = 1000
 
         # Callbacks
-        self.callbacks: Dict[str, List[Callable]] = {
+        self.callbacks: dict[str, list[Callable]] = {
             "pre_iteration": [],
             "post_iteration": [],
             "pre_rollout": [],
@@ -237,7 +242,7 @@ class OnPolicyRunner:
             self.agent.logger = self.logger
 
     @classmethod
-    def register_algorithm(cls, name: str, agent_class: Type, config_class: Type):
+    def register_algorithm(cls, name: str, agent_class: type, config_class: type):
         """Register a new algorithm for use with the runner.
 
         Args:
@@ -254,15 +259,15 @@ class OnPolicyRunner:
         self,
         algorithm: str,
         env: VecEnv,
-        cfg: Optional[Any],
-        actor_class: Optional[Type],
-        critic_class: Optional[Type],
-        obs_space: Optional[spaces.Space],
-        action_space: Optional[spaces.Space],
-        actor_cfg: Optional[Dict],
-        critic_cfg: Optional[Dict],
+        cfg: Any | None,
+        actor_class: type | None,
+        critic_class: type | None,
+        obs_space: spaces.Space | None,
+        action_space: spaces.Space | None,
+        actor_cfg: dict | None,
+        critic_cfg: dict | None,
         device: torch.device,
-    ) -> Tuple[Any, Any]:
+    ) -> tuple[Any, Any]:
         """Create algorithm agent based on name."""
         # Lazy import and register PPO if not already registered
         if not self.ALGORITHMS:
@@ -288,13 +293,15 @@ class OnPolicyRunner:
         # Validate required arguments
         if actor_class is None or critic_class is None:
             raise ValueError(
-                f"actor_class and critic_class are required when creating {algorithm} agent"
+                "actor_class and critic_class are required when creating "
+                f"{algorithm} agent"
             )
         obs_space = obs_space or getattr(env, "observation_space_gym", None)
         action_space = action_space or getattr(env, "action_space_gym", None)
         if obs_space is None or action_space is None:
             raise ValueError(
-                f"obs_space and action_space are required when creating {algorithm} agent"
+                "obs_space and action_space are required when creating "
+                f"{algorithm} agent"
             )
 
         # Create agent
@@ -343,7 +350,7 @@ class OnPolicyRunner:
             except Exception as e:
                 print(f"Warning: Callback failed for event '{event}': {e}")
 
-    def collect_rollout(self) -> Dict[str, float]:
+    def collect_rollout(self) -> dict[str, float]:
         """Collect a rollout from the environment.
 
         Uses the agent's collect_rollout method with an extras callback
@@ -360,7 +367,7 @@ class OnPolicyRunner:
 
     def _process_extras(
         self,
-        extras: Dict[str, Any],
+        extras: dict[str, Any],
         episode_ends: torch.Tensor,
         terminated: torch.Tensor,
         episode_rewards: torch.Tensor,
@@ -404,7 +411,7 @@ class OnPolicyRunner:
 
     def _accumulate_reward_components(
         self,
-        components: Dict[str, torch.Tensor],
+        components: dict[str, torch.Tensor],
         episode_ends: torch.Tensor,
     ) -> None:
         """Accumulate reward components per episode.
@@ -451,7 +458,7 @@ class OnPolicyRunner:
                 # Reset accumulators for completed episodes
                 self.current_reward_components[key] *= (~episode_ends).float()
 
-    def update(self) -> Dict[str, float]:
+    def update(self) -> dict[str, float]:
         """Update policy using collected rollout."""
         self._call_callbacks("pre_update", self)
         stats = self.agent.update()
@@ -460,9 +467,9 @@ class OnPolicyRunner:
 
     def learn(
         self,
-        total_timesteps: Optional[int] = None,
-        num_iterations: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        total_timesteps: int | None = None,
+        num_iterations: int | None = None,
+    ) -> dict[str, Any]:
         """Train the agent.
 
         Priority for determining training length:
@@ -476,9 +483,11 @@ class OnPolicyRunner:
             num_iterations: Number of policy iterations. Overrides total_timesteps.
 
         Returns:
-            Training history dict with keys: iterations, timesteps, episode_rewards, etc.
+            Training history dict with keys: iterations, timesteps,
+            episode_rewards, etc.
         """
-        # Determine iterations (priority: num_iterations > total_timesteps > cfg.max_iterations)
+        # Determine iterations with priority:
+        # num_iterations > total_timesteps > cfg.max_iterations
         transitions_per_iter = self.cfg.num_steps * self.env.num_envs
 
         if num_iterations is not None:
@@ -498,7 +507,9 @@ class OnPolicyRunner:
             )
 
         print(
-            f"Training for {total_iters} iterations ({total_iters * transitions_per_iter:,} steps)"
+            "Training for "
+            f"{total_iters} iterations "
+            f"({total_iters * transitions_per_iter:,} steps)"
         )
         print(f"  Batch size: {transitions_per_iter:,} transitions/iteration")
 
@@ -577,9 +588,9 @@ class OnPolicyRunner:
     def _update_history(
         self,
         iteration: int,
-        rollout_stats: Dict[str, float],
-        update_stats: Dict[str, float],
-        history: Dict[str, List],
+        rollout_stats: dict[str, float],
+        update_stats: dict[str, float],
+        history: dict[str, list],
     ) -> None:
         """Update training history buffers."""
         history["iterations"].append(iteration)
@@ -610,8 +621,8 @@ class OnPolicyRunner:
         self,
         iteration: int,
         total_iters: int,
-        rollout_stats: Dict[str, float],
-        update_stats: Dict[str, float],
+        rollout_stats: dict[str, float],
+        update_stats: dict[str, float],
         last_log_time: float,
     ) -> None:
         """Log training progress for current iteration."""
@@ -712,14 +723,14 @@ class OnPolicyRunner:
                 buffer.clear()
         self._log_scalars(env_metrics, self.iteration)
 
-    def _log_scalars(self, scalars: Dict[str, float], step: int) -> None:
+    def _log_scalars(self, scalars: dict[str, float], step: int) -> None:
         """Log a batch of scalar metrics when available."""
         if self.logger and scalars:
             self.logger.log_scalars(scalars, step)
 
     def _get_rollout_metrics_for_logging(
-        self, rollout_stats: Dict[str, float]
-    ) -> Dict[str, float]:
+        self, rollout_stats: dict[str, float]
+    ) -> dict[str, float]:
         """Drop rollout metrics that are duplicated elsewhere in the same log step."""
         metrics = dict(rollout_stats)
         if self.agent.episode_rewards:
@@ -727,8 +738,8 @@ class OnPolicyRunner:
         return metrics
 
     def _get_train_iteration_metrics(
-        self, update_stats: Dict[str, float]
-    ) -> Dict[str, float]:
+        self, update_stats: dict[str, float]
+    ) -> dict[str, float]:
         """Return optional train/* metrics on an iteration-based x-axis."""
         if not getattr(self.cfg, "log_train_metrics_vs_iteration", False):
             return {}
@@ -740,7 +751,7 @@ class OnPolicyRunner:
 
     def _get_episode_iteration_metrics(
         self, mean_reward: float, mean_length: float
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Return optional episode/* metrics on an iteration-based x-axis."""
         if not getattr(self.cfg, "log_episode_metrics_vs_iteration", False):
             return {}
@@ -749,7 +760,7 @@ class OnPolicyRunner:
             "episode_vs_iter/mean_length": mean_length,
         }
 
-    def _get_detailed_rollout_stats(self) -> Dict[str, float]:
+    def _get_detailed_rollout_stats(self) -> dict[str, float]:
         """Return optional rollout distribution statistics."""
         if not getattr(self.cfg, "log_detailed_rollout_stats", False):
             return {}
@@ -786,7 +797,7 @@ class OnPolicyRunner:
         self.total_timesteps = getattr(self.agent, "total_timesteps", 0)
         print(f"Loaded checkpoint: {path}")
 
-    def eval(self, num_episodes: int = 10) -> Dict[str, float]:
+    def eval(self, num_episodes: int = 10) -> dict[str, float]:
         """Evaluate the agent."""
         return self.agent.eval(num_episodes)
 

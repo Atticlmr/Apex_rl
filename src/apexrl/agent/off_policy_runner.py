@@ -18,7 +18,7 @@ from __future__ import annotations
 import collections
 import os
 import time
-from typing import Any, Deque, Dict, List, Optional, Tuple, Type
+from typing import Any
 
 import torch
 from gymnasium import spaces
@@ -30,23 +30,23 @@ from apexrl.utils.logger import Logger
 class OffPolicyRunner:
     """Runner for off-policy algorithms such as DQN."""
 
-    ALGORITHMS: Dict[str, Any] = {}
+    ALGORITHMS: dict[str, Any] = {}
 
     def __init__(
         self,
         env: VecEnv,
-        cfg: Optional[Any] = None,
+        cfg: Any | None = None,
         algorithm: str = "dqn",
-        q_network_class: Optional[Type] = None,
-        obs_space: Optional[spaces.Space] = None,
-        action_space: Optional[spaces.Space] = None,
-        q_network_cfg: Optional[Dict[str, Any]] = None,
-        agent: Optional[Any] = None,
-        log_dir: Optional[str] = None,
-        save_dir: Optional[str] = None,
-        device: Optional[torch.device] = None,
-        log_interval: Optional[int] = None,
-        save_interval: Optional[int] = None,
+        q_network_class: type | None = None,
+        obs_space: spaces.Space | None = None,
+        action_space: spaces.Space | None = None,
+        q_network_cfg: dict[str, Any] | None = None,
+        agent: Any | None = None,
+        log_dir: str | None = None,
+        save_dir: str | None = None,
+        device: torch.device | None = None,
+        log_interval: int | None = None,
+        save_interval: int | None = None,
     ):
         """Initialize the off-policy runner."""
         self.env = env
@@ -106,16 +106,20 @@ class OffPolicyRunner:
 
         self.iteration = 0
         self.total_timesteps = getattr(self.agent, "total_timesteps", 0)
-        self.start_time: Optional[float] = None
-        self.episode_rewards: Deque[float] = collections.deque(maxlen=100)
-        self.episode_lengths: Deque[float] = collections.deque(maxlen=100)
-        self.current_episode_rewards = torch.zeros(self.env.num_envs, device=self.device)
+        self.start_time: float | None = None
+        self.episode_rewards: collections.deque[float] = collections.deque(maxlen=100)
+        self.episode_lengths: collections.deque[float] = collections.deque(maxlen=100)
+        self.current_episode_rewards = torch.zeros(
+            self.env.num_envs, device=self.device
+        )
         self.current_episode_lengths = torch.zeros(
             self.env.num_envs, dtype=torch.int32, device=self.device
         )
 
     @classmethod
-    def register_algorithm(cls, name: str, agent_class: Type, config_class: Type) -> None:
+    def register_algorithm(
+        cls, name: str, agent_class: type, config_class: type
+    ) -> None:
         """Register an off-policy algorithm for auto-creation."""
         cls.ALGORITHMS[name.lower()] = {
             "agent_class": agent_class,
@@ -126,13 +130,13 @@ class OffPolicyRunner:
         self,
         algorithm: str,
         env: VecEnv,
-        cfg: Optional[Any],
-        q_network_class: Optional[Type],
-        obs_space: Optional[spaces.Space],
-        action_space: Optional[spaces.Space],
-        q_network_cfg: Optional[Dict[str, Any]],
+        cfg: Any | None,
+        q_network_class: type | None,
+        obs_space: spaces.Space | None,
+        action_space: spaces.Space | None,
+        q_network_cfg: dict[str, Any] | None,
         device: torch.device,
-    ) -> Tuple[Any, Any]:
+    ) -> tuple[Any, Any]:
         """Create algorithm agent based on name."""
         if not self.ALGORITHMS:
             from apexrl.algorithms.dqn import DQN, DQNConfig
@@ -160,7 +164,8 @@ class OffPolicyRunner:
         action_space = action_space or getattr(env, "action_space_gym", None)
         if obs_space is None or action_space is None:
             raise ValueError(
-                f"obs_space and action_space are required when creating {algorithm} agent"
+                "obs_space and action_space are required when creating "
+                f"{algorithm} agent"
             )
 
         agent = agent_class(
@@ -177,7 +182,7 @@ class OffPolicyRunner:
 
     def _to_bool_tensor(
         self,
-        value: Optional[torch.Tensor],
+        value: torch.Tensor | None,
         fallback: torch.Tensor,
         default: bool = False,
     ) -> torch.Tensor:
@@ -186,7 +191,7 @@ class OffPolicyRunner:
             return torch.full_like(fallback, default, dtype=torch.bool)
         return value.to(self.device).bool()
 
-    def _log_scalars(self, scalars: Dict[str, float], step: int) -> None:
+    def _log_scalars(self, scalars: dict[str, float], step: int) -> None:
         """Log a batch of scalar metrics when a logger is available."""
         if self.logger and scalars:
             self.logger.log_scalars(scalars, step)
@@ -211,17 +216,18 @@ class OffPolicyRunner:
         self.total_timesteps = getattr(self.agent, "total_timesteps", 0)
         print(f"Loaded checkpoint: {path}")
 
-    def eval(self, num_episodes: int = 10) -> Dict[str, float]:
+    def eval(self, num_episodes: int = 10) -> dict[str, float]:
         """Evaluate the agent."""
         return self.agent.eval(num_episodes)
 
-    def learn(self, total_timesteps: Optional[int] = None) -> Dict[str, Any]:
+    def learn(self, total_timesteps: int | None = None) -> dict[str, Any]:
         """Train the agent for a number of environment transitions."""
         if total_timesteps is None:
             total_timesteps = getattr(self.cfg, "max_timesteps", None)
         if total_timesteps is None:
             raise ValueError(
-                "Must provide total_timesteps or set cfg.max_timesteps for off-policy training"
+                "Must provide total_timesteps or set cfg.max_timesteps "
+                "for off-policy training"
             )
 
         obs = self.agent._to_tensor_observation(self.env.reset())
@@ -232,7 +238,7 @@ class OffPolicyRunner:
             "episode_lengths": [],
             "q_losses": [],
         }
-        last_update_stats: Dict[str, float] = {}
+        last_update_stats: dict[str, float] = {}
 
         print(f"Training for {total_timesteps:,} timesteps")
         print(f"  Parallel environments: {self.env.num_envs}")
@@ -282,7 +288,9 @@ class OffPolicyRunner:
                 if dones.any():
                     done_indices = torch.where(dones)[0]
                     for idx in done_indices:
-                        self.episode_rewards.append(self.current_episode_rewards[idx].item())
+                        self.episode_rewards.append(
+                            self.current_episode_rewards[idx].item()
+                        )
                         self.episode_lengths.append(
                             float(self.current_episode_lengths[idx].item())
                         )
@@ -325,8 +333,12 @@ class OffPolicyRunner:
                     }
                     scalars.update(last_update_stats)
                     if self.episode_rewards:
-                        mean_reward = sum(self.episode_rewards) / len(self.episode_rewards)
-                        mean_length = sum(self.episode_lengths) / len(self.episode_lengths)
+                        mean_reward = sum(self.episode_rewards) / len(
+                            self.episode_rewards
+                        )
+                        mean_length = sum(self.episode_lengths) / len(
+                            self.episode_lengths
+                        )
                         scalars["episode/mean_reward"] = mean_reward
                         scalars["episode/mean_length"] = mean_length
                         history["episode_rewards"].append(mean_reward)
@@ -335,7 +347,8 @@ class OffPolicyRunner:
                     print(
                         f"Steps {self.total_timesteps:,} | FPS {fps} | "
                         f"Epsilon {epsilon:.3f} | "
-                        f"Q Loss {last_update_stats.get('train/q_loss', float('nan')):.4f}"
+                        "Q Loss "
+                        f"{last_update_stats.get('train/q_loss', float('nan')):.4f}"
                     )
 
                 should_save = (

@@ -18,8 +18,6 @@ Supports multi-dimensional observations (e.g., images) and flexible storage.
 
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
-
 import torch
 
 
@@ -42,8 +40,8 @@ class RolloutBuffer:
         self,
         num_envs: int,
         num_steps: int,
-        obs_shape: Tuple[int, ...],
-        action_shape: Tuple[int, ...],
+        obs_shape: tuple[int, ...],
+        action_shape: tuple[int, ...],
         action_dtype: torch.dtype,
         device: torch.device,
         num_privileged_obs: int = 0,
@@ -53,11 +51,13 @@ class RolloutBuffer:
         Args:
             num_envs: Number of parallel environments.
             num_steps: Number of steps per rollout (n_steps in PPO).
-            obs_shape: Shape of observations (e.g., (48,) for vectors, (3, 84, 84) for images).
+            obs_shape: Shape of observations
+                (e.g., (48,) for vectors, (3, 84, 84) for images).
             action_shape: Shape of actions. Empty tuple for scalar discrete actions.
             action_dtype: Data type used to store actions.
             device: Device for tensors.
-            num_privileged_obs: Dimension of privileged observations (for asymmetric critic).
+            num_privileged_obs: Dimension of privileged observations
+                (for asymmetric critic).
         """
         self.num_envs = num_envs
         self.num_steps = num_steps
@@ -117,7 +117,7 @@ class RolloutBuffer:
     def add(
         self,
         observations: torch.Tensor,
-        privileged_observations: Optional[torch.Tensor],
+        privileged_observations: torch.Tensor | None,
         actions: torch.Tensor,
         rewards: torch.Tensor,
         dones: torch.Tensor,
@@ -193,7 +193,7 @@ class RolloutBuffer:
         self.advantages = advantages
         self.returns = advantages + self.values
 
-    def get_all_data(self) -> Dict[str, torch.Tensor]:
+    def get_all_data(self) -> dict[str, torch.Tensor]:
         """Get all data from the buffer (flattened).
 
         Returns:
@@ -232,7 +232,7 @@ class RolloutBuffer:
     def get_minibatch(
         self,
         batch_size: int,
-    ) -> Tuple[torch.Tensor, ...]:
+    ) -> tuple[torch.Tensor, ...]:
         """Get a random minibatch from the buffer.
 
         Args:
@@ -277,7 +277,7 @@ class RolloutBuffer:
         """Return the number of transitions stored."""
         return self.step * self.num_envs
 
-    def to(self, device: torch.device) -> "RolloutBuffer":
+    def to(self, device: torch.device) -> RolloutBuffer:
         """Move all tensors to a new device.
 
         Args:

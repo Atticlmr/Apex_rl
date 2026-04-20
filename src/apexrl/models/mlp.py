@@ -20,7 +20,7 @@ Users can use these directly or as templates for custom implementations.
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -57,7 +57,7 @@ def _init_q_network(module: nn.Module, output_layer: nn.Module) -> None:
 
 def build_mlp(
     input_dim: int,
-    hidden_dims: List[int],
+    hidden_dims: list[int],
     output_dim: int,
     activation: str = "elu",
     layer_norm: bool = False,
@@ -125,7 +125,7 @@ class MLPActor(ContinuousActor):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Box,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize MLP Actor.
 
@@ -232,7 +232,7 @@ class MLPCritic(Critic):
     def __init__(
         self,
         obs_space: spaces.Space,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize MLP Critic.
 
@@ -316,7 +316,7 @@ class CNNActor(ContinuousActor):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Box,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize CNN Actor.
 
@@ -421,7 +421,7 @@ class CNNCritic(Critic):
     def __init__(
         self,
         obs_space: spaces.Space,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize CNN Critic.
 
@@ -520,7 +520,7 @@ class MLPDiscreteActor(DiscreteActor):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Discrete,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize MLP Discrete Actor.
 
@@ -591,7 +591,7 @@ class MLPQNetwork(DiscreteQNetwork):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Discrete,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize MLP Q-network."""
         super().__init__(obs_space, action_space, cfg)

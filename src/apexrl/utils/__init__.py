@@ -16,10 +16,10 @@
 from apexrl.utils.logger import (
     BaseLogger,
     Logger,
+    MultiLogger,
+    SwanLabLogger,
     TensorBoardLogger,
     WandbLogger,
-    SwanLabLogger,
-    MultiLogger,
     get_logger,
 )
 

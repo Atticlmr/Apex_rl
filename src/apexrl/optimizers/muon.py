@@ -29,9 +29,7 @@ import torch.distributed as dist
 
 def zeropower_via_newtonschulz5(G, steps: int):
     """Approximate orthogonalization with a quintic Newton-Schulz iteration."""
-    assert (
-        G.ndim >= 2
-    )  # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
+    assert G.ndim >= 2  # Batched Muon implementation adapted from the original release.
     a, b, c = (3.4445, -4.7750, 2.0315)
     X = G.bfloat16()
     if G.size(-2) > G.size(-1):
@@ -44,7 +42,7 @@ def zeropower_via_newtonschulz5(G, steps: int):
         A = X @ X.mT
         B = (
             b * A + c * A @ A
-        )  # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
+        )  # Quintic computation strategy adapted from the original release.
         X = a * X + B @ X
 
     if G.size(-2) > G.size(-1):

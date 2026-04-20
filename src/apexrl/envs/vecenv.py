@@ -23,17 +23,18 @@ References:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Tuple, Union
+from typing import Any
 
 import torch
 
 try:
     from tensordict import TensorDict
 except ImportError:  # pragma: no cover - optional dependency
-    class TensorDict(dict):
-        """Fallback TensorDict-compatible container used when tensordict is unavailable."""
 
-        def __init__(self, data: Dict[str, Any], batch_size: Any = None):
+    class TensorDict(dict):
+        """Fallback TensorDict-compatible container when tensordict is unavailable."""
+
+        def __init__(self, data: dict[str, Any], batch_size: Any = None):
             super().__init__(data)
             self.batch_size = batch_size
 
@@ -80,21 +81,21 @@ class VecEnv(ABC):
     num_privileged_obs: int = 0
     """Dimensionality of privileged observations (for asymmetric actor-critic)."""
 
-    max_episode_length: Union[int, torch.Tensor]
+    max_episode_length: int | torch.Tensor
     """Maximum episode length. Can be scalar or per-environment tensor."""
 
-    device: Union[torch.device, str]
+    device: torch.device | str
     """Device to use for tensors (typically 'cuda' for GPU simulators)."""
 
     # Buffers (to be initialized by subclasses)
     obs_buf: torch.Tensor
-    privileged_obs_buf: Union[torch.Tensor, None] = None
+    privileged_obs_buf: torch.Tensor | None = None
     rew_buf: torch.Tensor
     reset_buf: torch.Tensor
     episode_length_buf: torch.Tensor
-    extras: Dict[str, Any]
+    extras: dict[str, Any]
 
-    def __init__(self, device: Union[torch.device, str] = "cuda"):
+    def __init__(self, device: torch.device | str = "cuda"):
         """Initialize the vectorized environment.
 
         Args:
@@ -106,7 +107,7 @@ class VecEnv(ABC):
     @abstractmethod
     def get_observations(
         self,
-    ) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]]]:
+    ) -> TensorDict | tuple[torch.Tensor, dict[str, Any]]:
         """Return the current observations.
 
         Returns:
@@ -120,7 +121,7 @@ class VecEnv(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def reset(self) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]]]:
+    def reset(self) -> TensorDict | tuple[torch.Tensor, dict[str, Any]]:
         """Reset all environment instances.
 
         Returns:
@@ -131,9 +132,7 @@ class VecEnv(ABC):
     @abstractmethod
     def step(
         self, actions: torch.Tensor
-    ) -> Tuple[
-        Union[TensorDict, torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]
-    ]:
+    ) -> tuple[TensorDict | torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Apply actions to the environment and step the simulation.
 
         Args:
@@ -148,17 +147,19 @@ class VecEnv(ABC):
                 - extras: Extra information dictionary containing:
                     - "time_outs": Boolean tensor for timeout-based terminations.
                       Shape: (num_envs,). True if episode ended due to time limit.
-                    - "log": Dictionary of metrics for logging (keys should start with "/").
+                    - "log": Dictionary of metrics for logging
+                      (keys should start with "/").
 
         Note:
-            dones should be True for any episode termination (success, failure, timeout).
+            dones should be True for any episode termination
+            (success, failure, timeout).
             Use extras["time_outs"] to distinguish timeout-based terminations.
         """
         raise NotImplementedError
 
     def reset_idx(
         self, env_ids: torch.Tensor
-    ) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]], None]:
+    ) -> TensorDict | tuple[torch.Tensor, dict[str, Any]] | None:
         """Reset specific environments by index.
 
         This is useful for partial resets in GPU-accelerated environments where
@@ -175,7 +176,7 @@ class VecEnv(ABC):
         return None
 
     @staticmethod
-    def get_privileged_observations() -> Union[torch.Tensor, None]:
+    def get_privileged_observations() -> torch.Tensor | None:
         """Return privileged observations (e.g., for critic).
 
         Returns:
@@ -184,7 +185,7 @@ class VecEnv(ABC):
         """
         return None
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """Get the current state of the environment (for checkpointing).
 
         Returns:
@@ -195,7 +196,7 @@ class VecEnv(ABC):
             "extras": self.extras.copy(),
         }
 
-    def set_state(self, state: Dict[str, Any]) -> None:
+    def set_state(self, state: dict[str, Any]) -> None:
         """Set the environment state (for resuming from checkpoint).
 
         Args:
@@ -211,7 +212,7 @@ class VecEnv(ABC):
         pass
 
     @property
-    def observation_space(self) -> Dict[str, Any]:
+    def observation_space(self) -> dict[str, Any]:
         """Get observation space information.
 
         Returns:
@@ -225,7 +226,7 @@ class VecEnv(ABC):
         }
 
     @property
-    def action_space(self) -> Dict[str, Any]:
+    def action_space(self) -> dict[str, Any]:
         """Get action space information.
 
         Returns:
@@ -246,7 +247,7 @@ class VecEnv(ABC):
         """
         torch.manual_seed(seed)
 
-    def render(self, mode: str = "rgb_array") -> Union[torch.Tensor, None]:
+    def render(self, mode: str = "rgb_array") -> torch.Tensor | None:
         """Render the environment.
 
         Args:
@@ -292,25 +293,23 @@ class VecEnvWrapper(VecEnv):
 
     def get_observations(
         self,
-    ) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]]]:
+    ) -> TensorDict | tuple[torch.Tensor, dict[str, Any]]:
         """Return observations from wrapped environment."""
         return self.env.get_observations()
 
-    def reset(self) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]]]:
+    def reset(self) -> TensorDict | tuple[torch.Tensor, dict[str, Any]]:
         """Reset wrapped environment."""
         return self.env.reset()
 
     def step(
         self, actions: torch.Tensor
-    ) -> Tuple[
-        Union[TensorDict, torch.Tensor], torch.Tensor, torch.Tensor, Dict[str, Any]
-    ]:
+    ) -> tuple[TensorDict | torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step wrapped environment."""
         return self.env.step(actions)
 
     def reset_idx(
         self, env_ids: torch.Tensor
-    ) -> Union[TensorDict, Tuple[torch.Tensor, Dict[str, Any]], None]:
+    ) -> TensorDict | tuple[torch.Tensor, dict[str, Any]] | None:
         """Reset specific environments in wrapped environment."""
         return self.env.reset_idx(env_ids)
 
@@ -339,12 +338,12 @@ class VecEnvWrapper(VecEnv):
         return self.env.episode_length_buf
 
     @property
-    def extras(self) -> Dict[str, Any]:
+    def extras(self) -> dict[str, Any]:
         """Access extras of wrapped environment."""
         return self.env.extras
 
     @extras.setter
-    def extras(self, value: Dict[str, Any]):
+    def extras(self, value: dict[str, Any]):
         """Set extras of wrapped environment."""
         self.env.extras = value
 
@@ -361,7 +360,7 @@ class DummyVecEnv(VecEnv):
         num_envs: int = 4096,
         num_obs: int = 48,
         num_actions: int = 12,
-        device: Union[torch.device, str] = "cuda",
+        device: torch.device | str = "cuda",
         max_episode_length: int = 1000,
     ):
         """Initialize dummy vectorized environment.
@@ -401,7 +400,7 @@ class DummyVecEnv(VecEnv):
 
     def step(
         self, actions: torch.Tensor
-    ) -> Tuple[TensorDict, torch.Tensor, torch.Tensor, Dict[str, Any]]:
+    ) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step the dummy environment.
 
         Simulates environment dynamics with random observations.

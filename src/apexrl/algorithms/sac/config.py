@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 @dataclass
@@ -68,7 +68,7 @@ class SACConfig:
     train_freq: int = 1
     gradient_steps: int = 1
     target_update_interval: int = 1
-    max_timesteps: Optional[int] = None
+    max_timesteps: int | None = None
 
     # Optimizers
     actor_learning_rate: float = 3e-4
@@ -80,11 +80,11 @@ class SACConfig:
     # Entropy temperature
     auto_alpha: bool = True
     init_alpha: float = 0.2
-    target_entropy: Optional[float] = None
+    target_entropy: float | None = None
 
     # Network architecture
-    actor_hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
-    critic_hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
+    actor_hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
+    critic_hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activation: str = "relu"
     layer_norm: bool = False
     use_tanh_squash: bool = True
@@ -94,8 +94,8 @@ class SACConfig:
     # Logging
     log_interval: int = 1_000
     save_interval: int = 10_000
-    logger_backend: Union[str, List[str]] = "tensorboard"
-    logger_kwargs: Optional[Dict[str, Any]] = None
+    logger_backend: str | list[str] = "tensorboard"
+    logger_kwargs: dict[str, Any] | None = None
 
     # Device
     device: str = "auto"

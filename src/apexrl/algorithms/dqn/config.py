@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 @dataclass
@@ -39,16 +39,16 @@ class DQNConfig:
     epsilon_start: float = 1.0
     epsilon_end: float = 0.05
     epsilon_decay_steps: int = 10_000
-    max_timesteps: Optional[int] = None
+    max_timesteps: int | None = None
 
-    network_hidden_dims: List[int] = field(default_factory=lambda: [256, 256])
+    network_hidden_dims: list[int] = field(default_factory=lambda: [256, 256])
     activation: str = "relu"
     layer_norm: bool = False
 
     log_interval: int = 1_000
     save_interval: int = 10_000
-    logger_backend: Union[str, List[str]] = "tensorboard"
-    logger_kwargs: Optional[Dict[str, Any]] = None
+    logger_backend: str | list[str] = "tensorboard"
+    logger_kwargs: dict[str, Any] | None = None
 
     device: str = "auto"
 
@@ -61,7 +61,9 @@ class DQNConfig:
         assert self.learning_starts >= 0, "learning_starts must be non-negative"
         assert self.train_freq > 0, "train_freq must be positive"
         assert self.gradient_steps > 0, "gradient_steps must be positive"
-        assert self.target_update_interval > 0, "target_update_interval must be positive"
+        assert self.target_update_interval > 0, (
+            "target_update_interval must be positive"
+        )
         assert 0 < self.tau <= 1.0, "tau must be in (0, 1]"
         assert self.max_grad_norm >= 0, "max_grad_norm must be non-negative"
         assert self.optimizer in ["adam", "adamw", "muon"], (

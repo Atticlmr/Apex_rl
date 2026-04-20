@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 @dataclass
@@ -32,7 +32,8 @@ class PPOConfig:
 
         # Learning rates
         learning_rate: Learning rate for optimizer.
-        learning_rate_schedule: Learning rate schedule ("constant", "linear", "adaptive").
+        learning_rate_schedule: Learning rate schedule
+            ("constant", "linear", "adaptive").
         max_learning_rate: Maximum learning rate for adaptive schedule.
         min_learning_rate: Minimum learning rate for adaptive schedule.
 
@@ -85,11 +86,9 @@ class PPOConfig:
     # Training parameters
     num_steps: int = 24
     num_epochs: int = 5
-    batch_size: Optional[int] = None  # Defaults to num_steps * num_envs
-    minibatch_size: Optional[int] = None  # Defaults to batch_size
-    max_iterations: Optional[int] = (
-        None  # Max policy updates, overrides total_timesteps
-    )
+    batch_size: int | None = None  # Defaults to num_steps * num_envs
+    minibatch_size: int | None = None  # Defaults to batch_size
+    max_iterations: int | None = None  # Max policy updates, overrides total_timesteps
 
     # Learning rates
     learning_rate: float = 3e-4
@@ -101,17 +100,17 @@ class PPOConfig:
     gamma: float = 0.99
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    clip_range_vf: Optional[float] = None  # None = no clipping
+    clip_range_vf: float | None = None  # None = no clipping
     vf_coef: float = 0.5
     ent_coef: float = 0.0
     max_grad_norm: float = 1.0
-    target_kl: Optional[float] = (
+    target_kl: float | None = (
         None  # Target KL divergence for early stopping (None = disabled)
     )
 
     # Network architecture
-    actor_hidden_dims: List[int] = field(default_factory=lambda: [256, 256, 256])
-    critic_hidden_dims: List[int] = field(default_factory=lambda: [256, 256, 256])
+    actor_hidden_dims: list[int] = field(default_factory=lambda: [256, 256, 256])
+    critic_hidden_dims: list[int] = field(default_factory=lambda: [256, 256, 256])
     activation: str = "elu"
     layer_norm: bool = False
     fixed_std: bool = True
@@ -141,8 +140,10 @@ class PPOConfig:
     log_train_metrics_vs_iteration: bool = False
     log_episode_metrics_vs_iteration: bool = False
     log_detailed_rollout_stats: bool = False
-    logger_backend: Union[str, List[str]] = "tensorboard"  # "tensorboard", "wandb", "swanlab", or list
-    logger_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for logger
+    logger_backend: str | list[str] = (
+        "tensorboard"  # "tensorboard", "wandb", "swanlab", or list
+    )
+    logger_kwargs: dict[str, Any] | None = None  # Additional kwargs for logger
 
     # Device
     device: str = "auto"

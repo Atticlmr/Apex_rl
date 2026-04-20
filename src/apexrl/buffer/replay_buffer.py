@@ -11,11 +11,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Copyright (c) 2026 GitHub@Apex_rl Developer
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Replay buffer for off-policy algorithms such as DQN."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import torch
 
@@ -26,8 +38,8 @@ class ReplayBuffer:
     def __init__(
         self,
         capacity: int,
-        obs_shape: Tuple[int, ...],
-        action_shape: Tuple[int, ...] = (),
+        obs_shape: tuple[int, ...],
+        action_shape: tuple[int, ...] = (),
         device: torch.device | str = "cpu",
         obs_dtype: torch.dtype = torch.float32,
         action_dtype: torch.dtype = torch.long,
@@ -128,13 +140,14 @@ class ReplayBuffer:
         if batch_size and end >= self.capacity:
             self.full = True
 
-    def sample(self, batch_size: int) -> Dict[str, torch.Tensor]:
+    def sample(self, batch_size: int) -> dict[str, torch.Tensor]:
         """Sample a random batch of transitions."""
         if batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
         if self.size < batch_size:
             raise ValueError(
-                f"cannot sample {batch_size} transitions from buffer of size {self.size}"
+                "cannot sample "
+                f"{batch_size} transitions from buffer of size {self.size}"
             )
 
         indices = torch.randint(0, self.size, (batch_size,), device=self.device)
@@ -154,7 +167,7 @@ class ReplayBuffer:
         self.pos = 0
         self.full = False
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """Serialize replay buffer state for checkpointing."""
         size = self.size
         return {
@@ -173,7 +186,7 @@ class ReplayBuffer:
             "dones": self.dones[:size].clone(),
         }
 
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Restore replay buffer state from checkpoint."""
         size = int(state_dict.get("size", 0))
         if state_dict["capacity"] != self.capacity:
@@ -198,9 +211,7 @@ class ReplayBuffer:
                 state_dict["rewards"].to(self.device, dtype=torch.float32)
             )
             self.next_observations[:size].copy_(
-                state_dict["next_observations"].to(
-                    self.device, dtype=self.obs_dtype
-                )
+                state_dict["next_observations"].to(self.device, dtype=self.obs_dtype)
             )
             self.dones[:size].copy_(
                 state_dict["dones"].to(self.device, dtype=torch.float32)

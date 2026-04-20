@@ -23,7 +23,6 @@ from torch.optim import Adam, AdamW
 
 from apexrl.optimizers.muon import Muon
 
-
 __all__ = ["Adam", "AdamW", "Muon"]
 
 

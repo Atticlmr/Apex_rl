@@ -1,12 +1,25 @@
 #!/usr/bin/env python
+# Copyright (c) 2026 GitHub@Apex_rl Developer
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Regression tests for training log structure."""
 
-from pathlib import Path
 import importlib.util
-from types import SimpleNamespace
-import types
 import sys
 import time
+import types
+from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 
@@ -76,11 +89,7 @@ def test_on_policy_runner_logging_defaults_avoid_redundant_metrics():
         last_log_time=time.time() - 1.0,
     )
 
-    logged_keys = {
-        key
-        for scalars, _step in runner.logger.calls
-        for key in scalars
-    }
+    logged_keys = {key for scalars, _step in runner.logger.calls for key in scalars}
 
     assert "time/iteration" not in logged_keys
     assert "train_vs_iter/policy_loss" not in logged_keys

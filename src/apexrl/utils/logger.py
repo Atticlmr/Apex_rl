@@ -20,16 +20,18 @@ This module provides a unified logging interface that supports:
 
 Usage:
     >>> from apexrl.utils.logger import Logger
-    >>> logger = Logger(backend="tensorboard", log_dir="./runs", experiment_name="ppo_exp")
+    >>> logger = Logger(
+    ...     backend="tensorboard", log_dir="./runs", experiment_name="ppo_exp"
+    ... )
     >>> logger.log_scalar("reward/mean", 100.0, step=1000)
     >>> logger.log_scalars({"loss/policy": 0.1, "loss/value": 0.05}, step=1000)
     >>> logger.close()
 """
 
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Union
 import os
 import warnings
+from abc import ABC, abstractmethod
+from typing import Any
 
 
 class BaseLogger(ABC):
@@ -48,7 +50,7 @@ class BaseLogger(ABC):
         self.kwargs = kwargs
 
     @abstractmethod
-    def log_scalar(self, key: str, value: Union[int, float], step: Optional[int] = None) -> None:
+    def log_scalar(self, key: str, value: int | float, step: int | None = None) -> None:
         """Log a scalar value.
 
         Args:
@@ -59,7 +61,9 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_scalars(self, scalars: Dict[str, Union[int, float]], step: Optional[int] = None) -> None:
+    def log_scalars(
+        self, scalars: dict[str, int | float], step: int | None = None
+    ) -> None:
         """Log multiple scalar values.
 
         Args:
@@ -69,7 +73,7 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_histogram(self, key: str, values: Any, step: Optional[int] = None) -> None:
+    def log_histogram(self, key: str, values: Any, step: int | None = None) -> None:
         """Log a histogram of values.
 
         Args:
@@ -80,7 +84,7 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_image(self, key: str, image: Any, step: Optional[int] = None) -> None:
+    def log_image(self, key: str, image: Any, step: int | None = None) -> None:
         """Log an image.
 
         Args:
@@ -91,7 +95,9 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_video(self, key: str, video: Any, step: Optional[int] = None, fps: int = 30) -> None:
+    def log_video(
+        self, key: str, video: Any, step: int | None = None, fps: int = 30
+    ) -> None:
         """Log a video.
 
         Args:
@@ -103,7 +109,7 @@ class BaseLogger(ABC):
         pass
 
     @abstractmethod
-    def log_config(self, config: Dict[str, Any]) -> None:
+    def log_config(self, config: dict[str, Any]) -> None:
         """Log configuration/hyperparameters.
 
         Args:
@@ -141,24 +147,25 @@ class TensorBoardLogger(BaseLogger):
         from torch.utils.tensorboard import SummaryWriter
 
         self.writer = SummaryWriter(
-            log_dir=os.path.join(log_dir, experiment_name),
-            **kwargs
+            log_dir=os.path.join(log_dir, experiment_name), **kwargs
         )
 
-    def log_scalar(self, key: str, value: Union[int, float], step: Optional[int] = None) -> None:
+    def log_scalar(self, key: str, value: int | float, step: int | None = None) -> None:
         """Log a scalar value to TensorBoard."""
         self.writer.add_scalar(key, value, global_step=step)
 
-    def log_scalars(self, scalars: Dict[str, Union[int, float]], step: Optional[int] = None) -> None:
+    def log_scalars(
+        self, scalars: dict[str, int | float], step: int | None = None
+    ) -> None:
         """Log multiple scalar values to TensorBoard."""
         for key, value in scalars.items():
             self.writer.add_scalar(key, value, global_step=step)
 
-    def log_histogram(self, key: str, values: Any, step: Optional[int] = None) -> None:
+    def log_histogram(self, key: str, values: Any, step: int | None = None) -> None:
         """Log a histogram to TensorBoard."""
         self.writer.add_histogram(key, values, global_step=step)
 
-    def log_image(self, key: str, image: Any, step: Optional[int] = None) -> None:
+    def log_image(self, key: str, image: Any, step: int | None = None) -> None:
         """Log an image to TensorBoard.
 
         Args:
@@ -168,7 +175,9 @@ class TensorBoardLogger(BaseLogger):
         """
         self.writer.add_image(key, image, global_step=step)
 
-    def log_video(self, key: str, video: Any, step: Optional[int] = None, fps: int = 30) -> None:
+    def log_video(
+        self, key: str, video: Any, step: int | None = None, fps: int = 30
+    ) -> None:
         """Log a video to TensorBoard.
 
         Args:
@@ -179,7 +188,7 @@ class TensorBoardLogger(BaseLogger):
         """
         self.writer.add_video(key, video, global_step=step, fps=fps)
 
-    def log_config(self, config: Dict[str, Any]) -> None:
+    def log_config(self, config: dict[str, Any]) -> None:
         """Log configuration to TensorBoard as hyperparameters."""
         # Filter out non-serializable values
         hparams = {}
@@ -187,11 +196,15 @@ class TensorBoardLogger(BaseLogger):
         for k, v in config.items():
             if isinstance(v, (int, float, str, bool)):
                 hparams[k] = v
-            elif isinstance(v, (list, tuple)) and len(v) > 0 and isinstance(v[0], (int, float)):
+            elif (
+                isinstance(v, (list, tuple))
+                and len(v) > 0
+                and isinstance(v[0], (int, float))
+            ):
                 hparams[k] = str(v)
             else:
                 hparams[k] = str(v)
-        
+
         # Add dummy metric for hparams to show in TensorBoard
         self.writer.add_hparams(hparams, metrics)
 
@@ -207,11 +220,11 @@ class WandbLogger(BaseLogger):
         self,
         experiment_name: str,
         log_dir: str = "./wandb",
-        project: Optional[str] = None,
-        entity: Optional[str] = None,
-        tags: Optional[list] = None,
-        resume: Optional[str] = None,
-        **kwargs
+        project: str | None = None,
+        entity: str | None = None,
+        tags: list | None = None,
+        resume: str | None = None,
+        **kwargs,
     ):
         """Initialize wandb logger.
 
@@ -236,27 +249,29 @@ class WandbLogger(BaseLogger):
             dir=log_dir,
             tags=tags,
             resume=resume,
-            **kwargs
+            **kwargs,
         )
 
-    def log_scalar(self, key: str, value: Union[int, float], step: Optional[int] = None) -> None:
+    def log_scalar(self, key: str, value: int | float, step: int | None = None) -> None:
         """Log a scalar value to wandb."""
         self.wandb.log({key: value}, step=step)
 
-    def log_scalars(self, scalars: Dict[str, Union[int, float]], step: Optional[int] = None) -> None:
+    def log_scalars(
+        self, scalars: dict[str, int | float], step: int | None = None
+    ) -> None:
         """Log multiple scalar values to wandb."""
         self.wandb.log(scalars, step=step)
 
-    def log_histogram(self, key: str, values: Any, step: Optional[int] = None) -> None:
+    def log_histogram(self, key: str, values: Any, step: int | None = None) -> None:
         """Log a histogram to wandb."""
         import numpy as np
 
         if not isinstance(values, np.ndarray):
             values = np.array(values)
-        
+
         self.wandb.log({key: self.wandb.Histogram(values)}, step=step)
 
-    def log_image(self, key: str, image: Any, step: Optional[int] = None) -> None:
+    def log_image(self, key: str, image: Any, step: int | None = None) -> None:
         """Log an image to wandb.
 
         Args:
@@ -266,7 +281,9 @@ class WandbLogger(BaseLogger):
         """
         self.wandb.log({key: self.wandb.Image(image)}, step=step)
 
-    def log_video(self, key: str, video: Any, step: Optional[int] = None, fps: int = 30) -> None:
+    def log_video(
+        self, key: str, video: Any, step: int | None = None, fps: int = 30
+    ) -> None:
         """Log a video to wandb.
 
         Args:
@@ -277,7 +294,7 @@ class WandbLogger(BaseLogger):
         """
         self.wandb.log({key: self.wandb.Video(video, fps=fps)}, step=step)
 
-    def log_config(self, config: Dict[str, Any]) -> None:
+    def log_config(self, config: dict[str, Any]) -> None:
         """Log configuration/hyperparameters to wandb."""
         self.wandb.config.update(config)
 
@@ -293,9 +310,9 @@ class SwanLabLogger(BaseLogger):
         self,
         experiment_name: str,
         log_dir: str = "./swanlab",
-        project: Optional[str] = None,
-        experiment_description: Optional[str] = None,
-        **kwargs
+        project: str | None = None,
+        experiment_description: str | None = None,
+        **kwargs,
     ):
         """Initialize SwanLab logger.
 
@@ -316,34 +333,39 @@ class SwanLabLogger(BaseLogger):
             experiment_name=experiment_name,
             description=experiment_description,
             logdir=log_dir,
-            **kwargs
+            **kwargs,
         )
 
-    def log_scalar(self, key: str, value: Union[int, float], step: Optional[int] = None) -> None:
+    def log_scalar(self, key: str, value: int | float, step: int | None = None) -> None:
         """Log a scalar value to SwanLab."""
         self.swanlab.log({key: value}, step=step)
 
-    def log_scalars(self, scalars: Dict[str, Union[int, float]], step: Optional[int] = None) -> None:
+    def log_scalars(
+        self, scalars: dict[str, int | float], step: int | None = None
+    ) -> None:
         """Log multiple scalar values to SwanLab."""
         self.swanlab.log(scalars, step=step)
 
-    def log_histogram(self, key: str, values: Any, step: Optional[int] = None) -> None:
+    def log_histogram(self, key: str, values: Any, step: int | None = None) -> None:
         """Log a histogram to SwanLab."""
         import numpy as np
 
         if not isinstance(values, np.ndarray):
             values = np.array(values)
-        
-        # SwanLab supports histogram via summary statistics
-        self.swanlab.log({
-            f"{key}/mean": values.mean(),
-            f"{key}/std": values.std(),
-            f"{key}/min": values.min(),
-            f"{key}/max": values.max(),
-            f"{key}/median": np.median(values),
-        }, step=step)
 
-    def log_image(self, key: str, image: Any, step: Optional[int] = None) -> None:
+        # SwanLab supports histogram via summary statistics
+        self.swanlab.log(
+            {
+                f"{key}/mean": values.mean(),
+                f"{key}/std": values.std(),
+                f"{key}/min": values.min(),
+                f"{key}/max": values.max(),
+                f"{key}/median": np.median(values),
+            },
+            step=step,
+        )
+
+    def log_image(self, key: str, image: Any, step: int | None = None) -> None:
         """Log an image to SwanLab.
 
         Args:
@@ -353,7 +375,9 @@ class SwanLabLogger(BaseLogger):
         """
         self.swanlab.log({key: self.swanlab.Image(image)}, step=step)
 
-    def log_video(self, key: str, video: Any, step: Optional[int] = None, fps: int = 30) -> None:
+    def log_video(
+        self, key: str, video: Any, step: int | None = None, fps: int = 30
+    ) -> None:
         """Log a video to SwanLab.
 
         Args:
@@ -362,11 +386,14 @@ class SwanLabLogger(BaseLogger):
             step: Global step.
             fps: Frames per second.
         """
-        # SwanLab may not support video directly, convert to images or use text description
-        warnings.warn(f"SwanLab video logging is not fully supported. Video '{key}' logged as text.")
+        # SwanLab may not support video directly, so log a text placeholder.
+        warnings.warn(
+            "SwanLab video logging is not fully supported. "
+            f"Video '{key}' logged as text."
+        )
         self.swanlab.log({key: f"[Video at step {step}]"}, step=step)
 
-    def log_config(self, config: Dict[str, Any]) -> None:
+    def log_config(self, config: dict[str, Any]) -> None:
         """Log configuration/hyperparameters to SwanLab."""
         self.swanlab.config.update(config)
 
@@ -386,32 +413,36 @@ class MultiLogger(BaseLogger):
         """
         self.loggers = loggers
 
-    def log_scalar(self, key: str, value: Union[int, float], step: Optional[int] = None) -> None:
+    def log_scalar(self, key: str, value: int | float, step: int | None = None) -> None:
         """Log a scalar value to all loggers."""
         for logger in self.loggers:
             logger.log_scalar(key, value, step)
 
-    def log_scalars(self, scalars: Dict[str, Union[int, float]], step: Optional[int] = None) -> None:
+    def log_scalars(
+        self, scalars: dict[str, int | float], step: int | None = None
+    ) -> None:
         """Log multiple scalar values to all loggers."""
         for logger in self.loggers:
             logger.log_scalars(scalars, step)
 
-    def log_histogram(self, key: str, values: Any, step: Optional[int] = None) -> None:
+    def log_histogram(self, key: str, values: Any, step: int | None = None) -> None:
         """Log a histogram to all loggers."""
         for logger in self.loggers:
             logger.log_histogram(key, values, step)
 
-    def log_image(self, key: str, image: Any, step: Optional[int] = None) -> None:
+    def log_image(self, key: str, image: Any, step: int | None = None) -> None:
         """Log an image to all loggers."""
         for logger in self.loggers:
             logger.log_image(key, image, step)
 
-    def log_video(self, key: str, video: Any, step: Optional[int] = None, fps: int = 30) -> None:
+    def log_video(
+        self, key: str, video: Any, step: int | None = None, fps: int = 30
+    ) -> None:
         """Log a video to all loggers."""
         for logger in self.loggers:
             logger.log_video(key, video, step, fps)
 
-    def log_config(self, config: Dict[str, Any]) -> None:
+    def log_config(self, config: dict[str, Any]) -> None:
         """Log configuration to all loggers."""
         for logger in self.loggers:
             logger.log_config(config)
@@ -437,10 +468,10 @@ class Logger:
     @classmethod
     def create(
         cls,
-        backend: Union[str, list],
+        backend: str | list,
         experiment_name: str,
         log_dir: str = "./logs",
-        **kwargs
+        **kwargs,
     ) -> BaseLogger:
         """Create a logger instance.
 
@@ -457,10 +488,10 @@ class Logger:
         Examples:
             >>> # Single backend
             >>> logger = Logger.create("tensorboard", "my_exp", "./runs")
-            
+
             >>> # Multiple backends
             >>> logger = Logger.create(["tensorboard", "wandb"], "my_exp", "./logs")
-            
+
             >>> # With backend-specific config
             >>> logger = Logger.create(
             ...     "wandb",
@@ -473,13 +504,15 @@ class Logger:
             loggers = []
             for b in backend:
                 if b not in cls.BACKENDS:
-                    raise ValueError(f"Unknown backend: {b}. Available: {list(cls.BACKENDS.keys())}")
+                    raise ValueError(
+                        f"Unknown backend: {b}. Available: {list(cls.BACKENDS.keys())}"
+                    )
                 try:
                     logger = cls.BACKENDS[b](experiment_name, log_dir, **kwargs)
                     loggers.append(logger)
                 except ImportError as e:
                     warnings.warn(f"Failed to import {b}: {e}. Skipping.")
-            
+
             if len(loggers) == 0:
                 raise RuntimeError("No loggers were successfully created.")
             elif len(loggers) == 1:
@@ -488,7 +521,10 @@ class Logger:
                 return MultiLogger(loggers)
         else:
             if backend not in cls.BACKENDS:
-                raise ValueError(f"Unknown backend: {backend}. Available: {list(cls.BACKENDS.keys())}")
+                raise ValueError(
+                    "Unknown backend: "
+                    f"{backend}. Available: {list(cls.BACKENDS.keys())}"
+                )
             return cls.BACKENDS[backend](experiment_name, log_dir, **kwargs)
 
     @classmethod
@@ -505,10 +541,10 @@ class Logger:
 
 
 def get_logger(
-    backend: Union[str, list] = "tensorboard",
+    backend: str | list = "tensorboard",
     experiment_name: str = "experiment",
     log_dir: str = "./logs",
-    **kwargs
+    **kwargs,
 ) -> BaseLogger:
     """Convenience function to create a logger.
 
@@ -524,26 +560,26 @@ def get_logger(
 
     Examples:
         >>> from apexrl.utils.logger import get_logger
-        >>> 
+        >>>
         >>> # TensorBoard (default)
         >>> logger = get_logger()
-        >>> 
+        >>>
         >>> # Weights & Biases
         >>> logger = get_logger("wandb", project="my_project")
-        >>> 
+        >>>
         >>> # SwanLab
         >>> logger = get_logger("swanlab", project="my_project")
-        >>> 
+        >>>
         >>> # Multiple backends
         >>> logger = get_logger(["tensorboard", "wandb"])
-        >>> 
+        >>>
         >>> # Log metrics
         >>> logger.log_scalar("reward", 100.0, step=1000)
         >>> logger.log_scalars({"loss": 0.5, "entropy": 0.01}, step=1000)
-        >>> 
+        >>>
         >>> # Log hyperparameters
         >>> logger.log_config({"lr": 3e-4, "gamma": 0.99})
-        >>> 
+        >>>
         >>> # Close logger
         >>> logger.close()
     """

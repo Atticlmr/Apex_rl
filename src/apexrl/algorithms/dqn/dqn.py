@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Dict, Optional, Type
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -33,13 +33,13 @@ class DQN:
     def __init__(
         self,
         env: Any,
-        cfg: Optional[DQNConfig] = None,
-        q_network_class: Optional[Type] = None,
-        obs_space: Optional[spaces.Space] = None,
-        action_space: Optional[spaces.Space] = None,
-        q_network_cfg: Optional[Dict[str, Any]] = None,
-        log_dir: Optional[str] = None,
-        device: Optional[torch.device] = None,
+        cfg: DQNConfig | None = None,
+        q_network_class: type | None = None,
+        obs_space: spaces.Space | None = None,
+        action_space: spaces.Space | None = None,
+        q_network_cfg: dict[str, Any] | None = None,
+        log_dir: str | None = None,
+        device: torch.device | None = None,
     ):
         """Initialize the DQN agent."""
         self.env = env
@@ -56,7 +56,8 @@ class DQN:
             raise ValueError("DQN requires obs_space and action_space")
         if not isinstance(self.action_space, spaces.Discrete):
             raise ValueError(
-                f"DQN only supports Discrete action spaces, got {type(self.action_space)}"
+                "DQN only supports Discrete action spaces, "
+                f"got {type(self.action_space)}"
             )
         if q_network_class is None:
             raise ValueError("q_network_class is required for DQN")
@@ -93,8 +94,8 @@ class DQN:
         self.num_updates = 0
 
     def _build_q_network_cfg(
-        self, q_network_cfg: Optional[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, q_network_cfg: dict[str, Any] | None
+    ) -> dict[str, Any]:
         """Build q-network configuration from DQN defaults and overrides."""
         cfg = {
             "hidden_dims": list(self.cfg.network_hidden_dims),
@@ -125,7 +126,10 @@ class DQN:
 
     def get_epsilon(self, total_timesteps: int) -> float:
         """Return the epsilon value for the given training step."""
-        progress = min(float(total_timesteps) / float(self.cfg.epsilon_decay_steps), 1.0)
+        progress = min(
+            float(total_timesteps) / float(self.cfg.epsilon_decay_steps),
+            1.0,
+        )
         return self.cfg.epsilon_start + progress * (
             self.cfg.epsilon_end - self.cfg.epsilon_start
         )
@@ -134,7 +138,7 @@ class DQN:
         self,
         obs: torch.Tensor,
         deterministic: bool = False,
-        epsilon: Optional[float] = None,
+        epsilon: float | None = None,
     ) -> torch.Tensor:
         """Select epsilon-greedy actions."""
         obs = self._to_tensor_observation(obs)
@@ -181,7 +185,7 @@ class DQN:
         ):
             target_param.data.lerp_(param.data, tau)
 
-    def update(self) -> Dict[str, float]:
+    def update(self) -> dict[str, float]:
         """Run one gradient update from a replay batch."""
         if len(self.replay_buffer) < max(self.cfg.batch_size, self.cfg.learning_starts):
             return {}
@@ -198,10 +202,14 @@ class DQN:
 
         with torch.no_grad():
             if self.cfg.double_dqn:
-                next_actions = self.q_network(next_observations).argmax(dim=-1, keepdim=True)
-                next_q = self.target_q_network(next_observations).gather(
-                    1, next_actions
-                ).squeeze(-1)
+                next_actions = self.q_network(next_observations).argmax(
+                    dim=-1, keepdim=True
+                )
+                next_q = (
+                    self.target_q_network(next_observations)
+                    .gather(1, next_actions)
+                    .squeeze(-1)
+                )
             else:
                 next_q = self.target_q_network(next_observations).max(dim=-1).values
             td_target = rewards + self.cfg.gamma * (1.0 - dones) * next_q
@@ -257,7 +265,7 @@ class DQN:
         self.total_timesteps = checkpoint.get("total_timesteps", 0)
         self.num_updates = checkpoint.get("num_updates", 0)
 
-    def eval(self, num_episodes: int = 10) -> Dict[str, float]:
+    def eval(self, num_episodes: int = 10) -> dict[str, float]:
         """Evaluate greedy DQN policy on the current environment."""
         obs = self._to_tensor_observation(self.env.reset())
         episode_rewards = []
@@ -288,7 +296,7 @@ class DQN:
             "eval/max_reward": rewards_tensor.max().item(),
         }
 
-    def learn(self, total_timesteps: Optional[int] = None) -> Dict[str, Any]:
+    def learn(self, total_timesteps: int | None = None) -> dict[str, Any]:
         """Train through the canonical OffPolicyRunner entrypoint."""
         from apexrl.agent.off_policy_runner import OffPolicyRunner
 

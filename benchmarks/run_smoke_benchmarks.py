@@ -1,31 +1,51 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 GitHub@Apex_rl Developer
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Run lightweight smoke benchmarks across representative PPO and DQN tasks."""
 
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import torch
 from gymnasium import make
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from apexrl.agent.on_policy_runner import OnPolicyRunner
-from apexrl.agent.off_policy_runner import OffPolicyRunner
-from apexrl.algorithms.dqn import DQNConfig
-from apexrl.algorithms.ppo import PPO, PPOConfig
-from apexrl.envs.gym_wrapper import GymVecEnv, GymVecEnvContinuous
-from apexrl.models import MLPActor, MLPCritic, MLPDiscreteActor, MLPQNetwork
+from apexrl.agent.off_policy_runner import OffPolicyRunner  # noqa: E402
+from apexrl.agent.on_policy_runner import OnPolicyRunner  # noqa: E402
+from apexrl.algorithms.dqn import DQNConfig  # noqa: E402
+from apexrl.algorithms.ppo import PPO, PPOConfig  # noqa: E402
+from apexrl.envs.gym_wrapper import GymVecEnv, GymVecEnvContinuous  # noqa: E402
+from apexrl.models import (  # noqa: E402
+    MLPActor,
+    MLPCritic,
+    MLPDiscreteActor,
+    MLPQNetwork,
+)
 
 
 def run_cartpole(num_envs: int, iterations: int) -> dict:
-    env = GymVecEnv([lambda: make("CartPole-v1") for _ in range(num_envs)], device="cpu")
+    env = GymVecEnv(
+        [lambda: make("CartPole-v1") for _ in range(num_envs)],
+        device="cpu",
+    )
     cfg = PPOConfig(
         num_steps=64,
         num_epochs=2,
@@ -46,7 +66,10 @@ def run_cartpole(num_envs: int, iterations: int) -> dict:
 
 
 def run_cartpole_dqn(num_envs: int, iterations: int) -> dict:
-    env = GymVecEnv([lambda: make("CartPole-v1") for _ in range(num_envs)], device="cpu")
+    env = GymVecEnv(
+        [lambda: make("CartPole-v1") for _ in range(num_envs)],
+        device="cpu",
+    )
     cfg = DQNConfig(
         batch_size=32,
         buffer_size=2_048,
@@ -94,7 +117,10 @@ def run_acrobot_dqn(num_envs: int, iterations: int) -> dict:
 
 
 def run_cartpole_dueling_dqn(num_envs: int, iterations: int) -> dict:
-    env = GymVecEnv([lambda: make("CartPole-v1") for _ in range(num_envs)], device="cpu")
+    env = GymVecEnv(
+        [lambda: make("CartPole-v1") for _ in range(num_envs)],
+        device="cpu",
+    )
     cfg = DQNConfig(
         dueling=True,
         batch_size=32,
@@ -213,7 +239,9 @@ def main() -> None:
         print(f"\n=== {task_name} ===")
         result = fn(args.num_envs, args.iterations)
         print(
-            f"final_iteration={result['final_iteration']} total_timesteps={result['total_timesteps']}"
+            "final_iteration="
+            f"{result['final_iteration']} "
+            f"total_timesteps={result['total_timesteps']}"
         )
 
 

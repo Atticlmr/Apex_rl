@@ -72,7 +72,7 @@ Example for continuous actions with custom CNN encoder:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -90,7 +90,7 @@ class Actor(nn.Module, ABC):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Space,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize Actor.
 
@@ -109,9 +109,7 @@ class Actor(nn.Module, ABC):
         self.action_shape = action_space.shape
 
     @abstractmethod
-    def forward(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
-    ) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass to get action distribution parameters.
 
         Args:
@@ -127,9 +125,9 @@ class Actor(nn.Module, ABC):
     @abstractmethod
     def act(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         deterministic: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample actions from the policy.
 
         Args:
@@ -146,9 +144,9 @@ class Actor(nn.Module, ABC):
     @abstractmethod
     def evaluate(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         actions: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate actions for computing loss.
 
         Args:
@@ -195,7 +193,7 @@ class ContinuousActor(Actor, ABC):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Box,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize Continuous Actor.
 
@@ -213,12 +211,13 @@ class ContinuousActor(Actor, ABC):
         # Continuous action info
         self.action_dim = action_space.shape[0] if len(action_space.shape) > 0 else 1
 
-        # PPO is typically more stable with unclipped Gaussian sampling plus env-side clipping.
+        # PPO is typically more stable with unclipped Gaussian sampling
+        # plus env-side clipping.
         self.use_tanh_squash = cfg.get("use_tanh_squash", False) if cfg else False
 
     @abstractmethod
     def get_action_dist(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
     ) -> torch.distributions.Normal:
         """Get Gaussian action distribution.
 
@@ -232,9 +231,9 @@ class ContinuousActor(Actor, ABC):
 
     def act(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         deterministic: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample continuous actions from Gaussian distribution.
 
         Args:
@@ -267,9 +266,9 @@ class ContinuousActor(Actor, ABC):
 
     def evaluate(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         actions: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate continuous actions.
 
         Args:
@@ -295,7 +294,7 @@ class ContinuousActor(Actor, ABC):
 
         return log_prob, entropy
 
-    def to(self, device: torch.device) -> "ContinuousActor":
+    def to(self, device: torch.device) -> ContinuousActor:
         """Move to device and update action bounds."""
         super().to(device)
         return self
@@ -317,7 +316,7 @@ class DiscreteActor(Actor, ABC):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Discrete,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize Discrete Actor.
 
@@ -337,7 +336,7 @@ class DiscreteActor(Actor, ABC):
 
     @abstractmethod
     def get_action_dist(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
     ) -> torch.distributions.Categorical:
         """Get Categorical action distribution.
 
@@ -351,9 +350,9 @@ class DiscreteActor(Actor, ABC):
 
     def act(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         deterministic: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample discrete actions from Categorical distribution.
 
         Args:
@@ -377,9 +376,9 @@ class DiscreteActor(Actor, ABC):
 
     def evaluate(
         self,
-        obs: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        obs: torch.Tensor | dict[str, torch.Tensor],
         actions: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate discrete actions.
 
         Args:
@@ -402,7 +401,7 @@ class DiscreteQNetwork(nn.Module, ABC):
         self,
         obs_space: spaces.Space,
         action_space: spaces.Discrete,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize the Q network."""
         nn.Module.__init__(self)
@@ -416,9 +415,7 @@ class DiscreteQNetwork(nn.Module, ABC):
         self.num_actions = action_space.n
 
     @abstractmethod
-    def forward(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
-    ) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Return Q-values with shape (batch_size, num_actions)."""
         raise NotImplementedError
 
@@ -435,7 +432,9 @@ class DiscreteQNetwork(nn.Module, ABC):
             size=greedy_actions.shape,
             device=greedy_actions.device,
         )
-        explore = torch.rand(greedy_actions.shape, device=greedy_actions.device) < epsilon
+        explore = (
+            torch.rand(greedy_actions.shape, device=greedy_actions.device) < epsilon
+        )
         return torch.where(explore, random_actions, greedy_actions)
 
 
@@ -471,7 +470,7 @@ class Critic(nn.Module, ABC):
     def __init__(
         self,
         obs_space: spaces.Space,
-        cfg: Optional[Dict[str, Any]] = None,
+        cfg: dict[str, Any] | None = None,
     ):
         """Initialize Critic.
 
@@ -485,9 +484,7 @@ class Critic(nn.Module, ABC):
         self.obs_shape = obs_space.shape
 
     @abstractmethod
-    def forward(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
-    ) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass to get value estimates.
 
         Args:
@@ -501,9 +498,7 @@ class Critic(nn.Module, ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_value(
-        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
-    ) -> torch.Tensor:
+    def get_value(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Get value estimates.
 
         This is typically the same as forward(), but allows for special
