@@ -30,6 +30,16 @@ uv pip install -e .
 | DQN       | ✅ Available | Replay buffer, OffPolicyRunner, Double DQN, Dueling DQN |
 | SAC       | 🚧 Planned  | Next Next release |
 
+## Development Plan
+
+Near-term roadmap:
+
+- SAC for continuous-control off-policy training
+- Temporal neural network training support for partially observable tasks
+- Recurrent and sequence-model policies such as LSTM, GRU, and Transformer-based agents
+- Sequence-aware training pipelines for rollout collection, hidden-state handling, and truncated backpropagation through time
+- Benchmarks for temporal models on POMDP-style control tasks
+
 ## Quick Start
 
 ### PPO
