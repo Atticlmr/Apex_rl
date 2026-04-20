@@ -26,7 +26,7 @@ import torch
 import torch.nn as nn
 from gymnasium import spaces
 
-from apexrl.models.base import ContinuousActor, Critic, DiscreteActor
+from apexrl.models.base import ContinuousActor, Critic, DiscreteActor, DiscreteQNetwork
 
 
 def _orthogonal_init(module: nn.Module, gain: float) -> None:
@@ -45,6 +45,12 @@ def _init_policy_network(module: nn.Module, output_layer: nn.Module) -> None:
 
 def _init_value_network(module: nn.Module, output_layer: nn.Module) -> None:
     """Initialize value nets with PPO-friendly gains."""
+    module.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
+    _orthogonal_init(output_layer, 1.0)
+
+
+def _init_q_network(module: nn.Module, output_layer: nn.Module) -> None:
+    """Initialize Q networks with stable hidden gains and unit output gain."""
     module.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
     _orthogonal_init(output_layer, 1.0)
 
@@ -174,7 +180,7 @@ class MLPActor(ContinuousActor):
         """Forward pass to get action mean.
 
         Args:
-            obs: Observations. Shape: (batch_size, *obs_shape)
+            obs: Observations with shape ``(batch_size, ...)``.
 
         Returns:
             Action mean. Shape: (batch_size, action_dim)
@@ -266,7 +272,7 @@ class MLPCritic(Critic):
         """Forward pass to get value estimates.
 
         Args:
-            obs: Observations. Shape: (batch_size, *obs_shape)
+            obs: Observations with shape ``(batch_size, ...)``.
 
         Returns:
             Value estimates. Shape: (batch_size,)
@@ -555,7 +561,7 @@ class MLPDiscreteActor(DiscreteActor):
         """Forward pass to get action logits.
 
         Args:
-            obs: Observations. Shape: (batch_size, *obs_shape)
+            obs: Observations with shape ``(batch_size, ...)``.
 
         Returns:
             Action logits. Shape: (batch_size, num_actions)
@@ -576,3 +582,62 @@ class MLPDiscreteActor(DiscreteActor):
         """
         logits = self.forward(obs)
         return torch.distributions.Categorical(logits=logits)
+
+
+class MLPQNetwork(DiscreteQNetwork):
+    """MLP-based discrete-action Q network for DQN-style algorithms."""
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Discrete,
+        cfg: Optional[Dict[str, Any]] = None,
+    ):
+        """Initialize MLP Q-network."""
+        super().__init__(obs_space, action_space, cfg)
+
+        hidden_dims = cfg.get("hidden_dims", [256, 256]) if cfg else [256, 256]
+        activation = cfg.get("activation", "relu") if cfg else "relu"
+        layer_norm = cfg.get("layer_norm", False) if cfg else False
+        self.dueling = cfg.get("dueling", False) if cfg else False
+
+        if isinstance(obs_space, spaces.Box):
+            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
+        else:
+            raise NotImplementedError(
+                f"MLPQNetwork only supports Box obs space, got {type(obs_space)}"
+            )
+
+        self.encoder = build_mlp(
+            input_dim=obs_dim,
+            hidden_dims=hidden_dims,
+            output_dim=hidden_dims[-1] if hidden_dims else obs_dim,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.feature_dim = hidden_dims[-1] if hidden_dims else obs_dim
+
+        if self.dueling:
+            self.value_head = nn.Linear(self.feature_dim, 1)
+            self.advantage_head = nn.Linear(self.feature_dim, self.num_actions)
+            _init_q_network(self, self.advantage_head)
+            _orthogonal_init(self.value_head, 1.0)
+        else:
+            self.q_head = nn.Linear(self.feature_dim, self.num_actions)
+            _init_q_network(self, self.q_head)
+
+    def _forward_features(self, obs: torch.Tensor) -> torch.Tensor:
+        """Encode flattened observations into latent features."""
+        if obs.dim() > 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        return self.encoder(obs)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """Return Q-values for each discrete action."""
+        features = self._forward_features(obs)
+        if not self.dueling:
+            return self.q_head(features)
+
+        values = self.value_head(features)
+        advantages = self.advantage_head(features)
+        return values + advantages - advantages.mean(dim=-1, keepdim=True)

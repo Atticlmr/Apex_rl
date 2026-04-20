@@ -13,6 +13,7 @@
 
 """Algorithms module for ApexRL."""
 
+from apexrl.algorithms.dqn import DQN, DQNConfig
 from apexrl.algorithms.ppo import PPO, PPOConfig
 
-__all__ = ["PPO", "PPOConfig"]
+__all__ = ["DQN", "DQNConfig", "PPO", "PPOConfig"]

@@ -11,23 +11,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-```bibtex
-@misc{jordan2024muon,
-  author       = {Keller Jordan and Yuchen Jin and Vlado Boza and You Jiacheng and
-                  Franz Cesista and Laker Newhouse and Jeremy Bernstein},
-  title        = {Muon: An optimizer for hidden layers in neural networks},
-  year         = {2024},
-  url          = {https://kellerjordan.github.io/posts/muon/}
-}
-```
+"""Muon optimizer variants adapted for ApexRL.
 
-name='muon-optimizer',
-    version='0.1.0',
-    author='Keller Jordan',
-    author_email='kjordan4077@gmail.com',
-    description='Muon opimizer',
-    url='https://github.com/KellerJordan/Muon',
+Reference:
+    Keller Jordan, Yuchen Jin, Vlado Boza, You Jiacheng, Franz Cesista,
+    Laker Newhouse, and Jeremy Bernstein. "Muon: An optimizer for hidden
+    layers in neural networks" (2024).
+    https://kellerjordan.github.io/posts/muon/
+
+Original implementation source:
+    https://github.com/KellerJordan/Muon
 """
 
 import torch
@@ -35,15 +28,7 @@ import torch.distributed as dist
 
 
 def zeropower_via_newtonschulz5(G, steps: int):
-    """
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
-    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
-    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
-    zero even beyond the point where the iteration no longer converges all the way to one everywhere
-    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
-    performance at all relative to UV^T, where USV^T = G is the SVD.
-    """
+    """Approximate orthogonalization with a quintic Newton-Schulz iteration."""
     assert (
         G.ndim >= 2
     )  # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
@@ -78,25 +63,16 @@ def muon_update(grad, momentum, beta=0.95, ns_steps=5, nesterov=True):
 
 
 class Muon(torch.optim.Optimizer):
-    """
-    Muon - MomentUm Orthogonalized by Newton-schulz
+    """Distributed Muon optimizer for hidden weight tensors.
 
-    https://kellerjordan.github.io/posts/muon/
+    Muon runs SGD with momentum followed by an orthogonalization step based on
+    Newton-Schulz iterations. It is intended for hidden weight matrices rather
+    than embeddings, output heads, or scalar parameters.
 
-    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
-    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-    matrix. For efficient orthogonalization we use a Newton-Schulz iteration, which has the
-    advantage that it can be stably run in bfloat16 on the GPU.
-
-    Muon should only be used for hidden weight layers. The input embedding, final output layer,
-    and any internal gains or biases should be optimized using a standard method such as AdamW.
-    Hidden convolutional weights can be trained using Muon by viewing them as 2D and then
-    collapsing their last 3 dimensions.
-
-    Arguments:
-        lr: The learning rate, in units of spectral norm per update.
-        weight_decay: The AdamW-style weight decay.
-        momentum: The momentum. A value of 0.95 here is usually fine.
+    Args:
+        lr: Learning rate in units of spectral norm per update.
+        weight_decay: AdamW-style weight decay coefficient.
+        momentum: Momentum coefficient.
     """
 
     def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95):
@@ -144,9 +120,7 @@ class Muon(torch.optim.Optimizer):
 
 
 class SingleDeviceMuon(torch.optim.Optimizer):
-    """
-    Muon variant for usage in non-distributed settings.
-    """
+    """Muon variant for non-distributed training."""
 
     def __init__(self, params, lr=0.02, weight_decay=0, momentum=0.95):
         defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum)
@@ -185,31 +159,11 @@ def adam_update(grad, buf1, buf2, step, betas, eps):
 
 
 class MuonWithAuxAdam(torch.optim.Optimizer):
-    """
-    Distributed Muon variant that can be used for all parameters in the network, since it runs an
-    internal AdamW for the parameters that are not compatible with Muon. The user must manually
-    specify which parameters shall be optimized with Muon and which with Adam by passing in a
-    list of param_groups with the `use_muon` flag set.
+    """Distributed Muon variant with an auxiliary Adam path.
 
-    The point of this class is to allow the user to have a single optimizer in their code, rather
-    than having both a Muon and an Adam which each need to be stepped.
-
-    You can see an example usage below:
-
-    https://github.com/KellerJordan/modded-nanogpt/blob/master/records/052525_MuonWithAuxAdamExample/b01550f9-03d8-4a9c-86fe-4ab434f1c5e0.txt#L470
-    ```
-    hidden_matrix_params = [p for n, p in model.blocks.named_parameters() if p.ndim >= 2 and "embed" not in n]
-    embed_params = [p for n, p in model.named_parameters() if "embed" in n]
-    scalar_params = [p for p in model.parameters() if p.ndim < 2]
-    head_params = [model.lm_head.weight]
-
-    from muon import MuonWithAuxAdam
-    adam_groups = [dict(params=head_params, lr=0.22), dict(params=embed_params, lr=0.6), dict(params=scalar_params, lr=0.04)]
-    adam_groups = [dict(**g, betas=(0.8, 0.95), eps=1e-10, use_muon=False) for g in adam_groups]
-    muon_group = dict(params=hidden_matrix_params, lr=0.05, momentum=0.95, use_muon=True)
-    param_groups = [*adam_groups, muon_group]
-    optimizer = MuonWithAuxAdam(param_groups)
-    ```
+    This optimizer allows Muon-compatible parameters and Adam-style parameter
+    groups to coexist in a single optimizer instance. Each parameter group must
+    provide a ``use_muon`` flag to select the update rule.
     """
 
     def __init__(self, param_groups):

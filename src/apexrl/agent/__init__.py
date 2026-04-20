@@ -13,6 +13,7 @@
 
 """Agent and runner modules for RL training."""
 
+from apexrl.agent.off_policy_runner import OffPolicyRunner
 from apexrl.agent.on_policy_runner import OnPolicyRunner
 
-__all__ = ["OnPolicyRunner"]
+__all__ = ["OffPolicyRunner", "OnPolicyRunner"]

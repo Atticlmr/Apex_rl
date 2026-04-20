@@ -395,6 +395,50 @@ class DiscreteActor(Actor, ABC):
         return log_prob, entropy
 
 
+class DiscreteQNetwork(nn.Module, ABC):
+    """Abstract base class for discrete-action Q networks."""
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Discrete,
+        cfg: Optional[Dict[str, Any]] = None,
+    ):
+        """Initialize the Q network."""
+        nn.Module.__init__(self)
+        assert isinstance(action_space, spaces.Discrete), (
+            f"DiscreteQNetwork requires Discrete action space, got {type(action_space)}"
+        )
+        self.obs_space = obs_space
+        self.action_space = action_space
+        self.cfg = cfg or {}
+        self.obs_shape = obs_space.shape
+        self.num_actions = action_space.n
+
+    @abstractmethod
+    def forward(
+        self, obs: Union[torch.Tensor, Dict[str, torch.Tensor]]
+    ) -> torch.Tensor:
+        """Return Q-values with shape (batch_size, num_actions)."""
+        raise NotImplementedError
+
+    def act(self, obs: torch.Tensor, epsilon: float = 0.0) -> torch.Tensor:
+        """Select epsilon-greedy actions."""
+        q_values = self.forward(obs)
+        greedy_actions = q_values.argmax(dim=-1)
+        if epsilon <= 0:
+            return greedy_actions
+
+        random_actions = torch.randint(
+            low=0,
+            high=self.num_actions,
+            size=greedy_actions.shape,
+            device=greedy_actions.device,
+        )
+        explore = torch.rand(greedy_actions.shape, device=greedy_actions.device) < epsilon
+        return torch.where(explore, random_actions, greedy_actions)
+
+
 class Critic(nn.Module, ABC):
     """Abstract base class for value networks.
 

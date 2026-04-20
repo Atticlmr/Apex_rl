@@ -127,13 +127,14 @@ class RolloutBuffer:
         """Add a transition to the buffer.
 
         Args:
-            observations: Observations. Shape: (num_envs, *obs_shape)
-            privileged_observations: Privileged observations. Shape: (num_envs, priv_obs_dim) or None
-            actions: Actions. Shape: (num_envs, action_dim) or (num_envs,)
-            rewards: Rewards. Shape: (num_envs,)
-            dones: Done flags. Shape: (num_envs,)
-            values: Value estimates. Shape: (num_envs,)
-            log_probs: Log probabilities of actions. Shape: (num_envs,)
+            observations: Observations with shape ``(num_envs, ...)``.
+            privileged_observations: Privileged observations with shape
+                ``(num_envs, priv_obs_dim)`` or ``None``.
+            actions: Actions with shape ``(num_envs, action_dim)`` or ``(num_envs,)``.
+            rewards: Rewards with shape ``(num_envs,)``.
+            dones: Done flags with shape ``(num_envs,)``.
+            values: Value estimates with shape ``(num_envs,)``.
+            log_probs: Log probabilities of actions with shape ``(num_envs,)``.
         """
         if self.step >= self.num_steps:
             raise ValueError(f"Rollout buffer is full (capacity: {self.num_steps})")
@@ -239,13 +240,13 @@ class RolloutBuffer:
 
         Returns:
             Tuple containing:
-                - observations: (batch_size, *obs_shape)
-                - privileged_observations: (batch_size, priv_obs_dim) or None
-                - actions: (batch_size,) or (batch_size, action_dim)
-                - old_log_probs: (batch_size,)
-                - advantages: (batch_size,)
-                - returns: (batch_size,)
-                - values: (batch_size,)
+                - observations: ``(batch_size, ...)``
+                - privileged_observations: ``(batch_size, priv_obs_dim)`` or ``None``
+                - actions: ``(batch_size,)`` or ``(batch_size, action_dim)``
+                - old_log_probs: ``(batch_size,)``
+                - advantages: ``(batch_size,)``
+                - returns: ``(batch_size,)``
+                - values: ``(batch_size,)``
         """
         # Get all flattened data
         data = self.get_all_data()

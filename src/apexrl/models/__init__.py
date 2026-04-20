@@ -13,13 +13,20 @@
 
 """Models module for ApexRL."""
 
-from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
+from apexrl.models.base import (
+    Actor,
+    ContinuousActor,
+    Critic,
+    DiscreteActor,
+    DiscreteQNetwork,
+)
 from apexrl.models.mlp import (
     CNNActor,
     CNNCritic,
     MLPActor,
     MLPCritic,
     MLPDiscreteActor,
+    MLPQNetwork,
     build_mlp,
 )
 
@@ -28,11 +35,13 @@ __all__ = [
     "Actor",
     "ContinuousActor",
     "DiscreteActor",
+    "DiscreteQNetwork",
     "Critic",
     # MLP implementations
     "MLPActor",
     "MLPCritic",
     "MLPDiscreteActor",
+    "MLPQNetwork",
     "build_mlp",
     # CNN implementations
     "CNNActor",

@@ -11,16 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2026 GitHub@Apex_rl Developer
-# SPDX-License-Identifier: Apache-2.0
+"""DQN algorithm exports."""
 
-# Copyright (c) 2026 GitHub@Apex_rl Developer
-# SPDX-License-Identifier: MIT
+from apexrl.algorithms.dqn.config import DQNConfig
+from apexrl.algorithms.dqn.dqn import DQN
 
-from apexrl.buffer.replay_buffer import ReplayBuffer
-from apexrl.buffer.rollout_buffer import RolloutBuffer
-
-__all__ = [
-    "ReplayBuffer",
-    "RolloutBuffer",
-]
+__all__ = ["DQN", "DQNConfig"]
