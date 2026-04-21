@@ -438,6 +438,41 @@ class DiscreteQNetwork(nn.Module, ABC):
         return torch.where(explore, random_actions, greedy_actions)
 
 
+class ContinuousQNetwork(nn.Module, ABC):
+    """Abstract base class for continuous-action Q networks.
+
+    Continuous-control algorithms such as SAC optimize critics of the form
+    ``Q(s, a)`` where both observations and actions are inputs.
+    """
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Box,
+        cfg: dict[str, Any] | None = None,
+    ):
+        """Initialize the continuous-action Q network."""
+        nn.Module.__init__(self)
+        assert isinstance(action_space, spaces.Box), (
+            f"ContinuousQNetwork requires Box action space, got {type(action_space)}"
+        )
+        self.obs_space = obs_space
+        self.action_space = action_space
+        self.cfg = cfg or {}
+        self.obs_shape = obs_space.shape
+        self.action_shape = action_space.shape
+        self.action_dim = action_space.shape[0] if len(action_space.shape) > 0 else 1
+
+    @abstractmethod
+    def forward(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return ``Q(s, a)`` values with shape ``(batch_size,)``."""
+        raise NotImplementedError
+
+
 class Critic(nn.Module, ABC):
     """Abstract base class for value networks.
 

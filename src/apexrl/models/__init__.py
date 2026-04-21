@@ -16,6 +16,7 @@
 from apexrl.models.base import (
     Actor,
     ContinuousActor,
+    ContinuousQNetwork,
     Critic,
     DiscreteActor,
     DiscreteQNetwork,
@@ -24,9 +25,11 @@ from apexrl.models.mlp import (
     CNNActor,
     CNNCritic,
     MLPActor,
+    MLPContinuousQNetwork,
     MLPCritic,
     MLPDiscreteActor,
     MLPQNetwork,
+    MLPSquashedGaussianActor,
     build_mlp,
 )
 
@@ -34,14 +37,17 @@ __all__ = [
     # Base classes
     "Actor",
     "ContinuousActor",
+    "ContinuousQNetwork",
     "DiscreteActor",
     "DiscreteQNetwork",
     "Critic",
     # MLP implementations
     "MLPActor",
+    "MLPSquashedGaussianActor",
     "MLPCritic",
     "MLPDiscreteActor",
     "MLPQNetwork",
+    "MLPContinuousQNetwork",
     "build_mlp",
     # CNN implementations
     "CNNActor",

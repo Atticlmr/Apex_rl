@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Run lightweight smoke benchmarks across representative PPO and DQN tasks."""
+"""Run lightweight smoke benchmarks across representative PPO, DQN, and SAC tasks."""
 
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ from apexrl.agent.off_policy_runner import OffPolicyRunner  # noqa: E402
 from apexrl.agent.on_policy_runner import OnPolicyRunner  # noqa: E402
 from apexrl.algorithms.dqn import DQNConfig  # noqa: E402
 from apexrl.algorithms.ppo import PPO, PPOConfig  # noqa: E402
+from apexrl.algorithms.sac import SACConfig  # noqa: E402
 from apexrl.envs.gym_wrapper import GymVecEnv, GymVecEnvContinuous  # noqa: E402
 from apexrl.models import (  # noqa: E402
     MLPActor,
@@ -219,6 +220,62 @@ def run_mountain_car_continuous(num_envs: int, iterations: int) -> dict:
         env.close()
 
 
+def run_pendulum_sac(num_envs: int, iterations: int) -> dict:
+    env = GymVecEnvContinuous(
+        [lambda: make("Pendulum-v1") for _ in range(num_envs)],
+        device="cpu",
+    )
+    cfg = SACConfig(
+        batch_size=64,
+        buffer_size=2_048,
+        learning_starts=64,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=256,
+        save_interval=0,
+        device="cpu",
+    )
+    runner = OffPolicyRunner(
+        env=env,
+        cfg=cfg,
+        algorithm="sac",
+        device=torch.device("cpu"),
+    )
+    try:
+        return runner.learn(total_timesteps=iterations * 128 * num_envs)
+    finally:
+        runner.close()
+
+
+def run_mountain_car_continuous_sac(num_envs: int, iterations: int) -> dict:
+    env = GymVecEnvContinuous(
+        [lambda: make("MountainCarContinuous-v0") for _ in range(num_envs)],
+        device="cpu",
+    )
+    cfg = SACConfig(
+        batch_size=64,
+        buffer_size=2_048,
+        learning_starts=64,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=256,
+        save_interval=0,
+        device="cpu",
+    )
+    runner = OffPolicyRunner(
+        env=env,
+        cfg=cfg,
+        algorithm="sac",
+        device=torch.device("cpu"),
+    )
+    try:
+        return runner.learn(total_timesteps=iterations * 128 * num_envs)
+    finally:
+        runner.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--iterations", type=int, default=2)
@@ -233,6 +290,8 @@ def main() -> None:
         ("Acrobot-v1 (Dueling DQN)", run_acrobot_dueling_dqn),
         ("Pendulum-v1", run_pendulum),
         ("MountainCarContinuous-v0", run_mountain_car_continuous),
+        ("Pendulum-v1 (SAC)", run_pendulum_sac),
+        ("MountainCarContinuous-v0 (SAC)", run_mountain_car_continuous_sac),
     ]
 
     for task_name, fn in tasks:

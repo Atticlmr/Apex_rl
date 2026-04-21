@@ -47,6 +47,10 @@ class OffPolicyRunner:
         device: torch.device | None = None,
         log_interval: int | None = None,
         save_interval: int | None = None,
+        actor_class: type | None = None,
+        critic_class: type | None = None,
+        actor_cfg: dict[str, Any] | None = None,
+        critic_cfg: dict[str, Any] | None = None,
     ):
         """Initialize the off-policy runner."""
         self.env = env
@@ -68,6 +72,10 @@ class OffPolicyRunner:
                 obs_space=obs_space,
                 action_space=action_space,
                 q_network_cfg=q_network_cfg,
+                actor_class=actor_class,
+                critic_class=critic_class,
+                actor_cfg=actor_cfg,
+                critic_cfg=critic_cfg,
                 device=self.device,
             )
 
@@ -135,13 +143,19 @@ class OffPolicyRunner:
         obs_space: spaces.Space | None,
         action_space: spaces.Space | None,
         q_network_cfg: dict[str, Any] | None,
+        actor_class: type | None,
+        critic_class: type | None,
+        actor_cfg: dict[str, Any] | None,
+        critic_cfg: dict[str, Any] | None,
         device: torch.device,
     ) -> tuple[Any, Any]:
         """Create algorithm agent based on name."""
         if not self.ALGORITHMS:
             from apexrl.algorithms.dqn import DQN, DQNConfig
+            from apexrl.algorithms.sac import SAC, SACConfig
 
             self.register_algorithm("dqn", DQN, DQNConfig)
+            self.register_algorithm("sac", SAC, SACConfig)
 
         algorithm = algorithm.lower()
         if algorithm not in self.ALGORITHMS:
@@ -155,10 +169,6 @@ class OffPolicyRunner:
 
         if cfg is None:
             cfg = config_class()
-        if q_network_class is None:
-            raise ValueError(
-                f"q_network_class is required when creating {algorithm} agent"
-            )
 
         obs_space = obs_space or getattr(env, "observation_space_gym", None)
         action_space = action_space or getattr(env, "action_space_gym", None)
@@ -168,16 +178,38 @@ class OffPolicyRunner:
                 f"{algorithm} agent"
             )
 
-        agent = agent_class(
-            env=env,
-            cfg=cfg,
-            q_network_class=q_network_class,
-            obs_space=obs_space,
-            action_space=action_space,
-            q_network_cfg=q_network_cfg or {},
-            log_dir=None,
-            device=device,
-        )
+        if algorithm == "dqn":
+            if q_network_class is None:
+                raise ValueError(
+                    "q_network_class is required when creating dqn agent"
+                )
+            agent = agent_class(
+                env=env,
+                cfg=cfg,
+                q_network_class=q_network_class,
+                obs_space=obs_space,
+                action_space=action_space,
+                q_network_cfg=q_network_cfg or {},
+                log_dir=None,
+                device=device,
+            )
+        elif algorithm == "sac":
+            agent = agent_class(
+                env=env,
+                cfg=cfg,
+                actor_class=actor_class,
+                critic_class=critic_class,
+                obs_space=obs_space,
+                action_space=action_space,
+                actor_cfg=actor_cfg or {},
+                critic_cfg=critic_cfg or {},
+                log_dir=None,
+                device=device,
+            )
+        else:
+            raise ValueError(
+                f"Unsupported off-policy auto-construction path for {algorithm}"
+            )
         return agent, cfg
 
     def _to_bool_tensor(

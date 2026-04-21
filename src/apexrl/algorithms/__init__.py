@@ -15,5 +15,6 @@
 
 from apexrl.algorithms.dqn import DQN, DQNConfig
 from apexrl.algorithms.ppo import PPO, PPOConfig
+from apexrl.algorithms.sac import SAC, SACConfig
 
-__all__ = ["DQN", "DQNConfig", "PPO", "PPOConfig"]
+__all__ = ["DQN", "DQNConfig", "PPO", "PPOConfig", "SAC", "SACConfig"]

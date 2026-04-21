@@ -14,5 +14,6 @@
 """Soft Actor-Critic package."""
 
 from apexrl.algorithms.sac.config import SACConfig
+from apexrl.algorithms.sac.sac import SAC
 
-__all__ = ["SACConfig"]
+__all__ = ["SAC", "SACConfig"]

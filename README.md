@@ -28,13 +28,12 @@ uv pip install -e .
 | --------- | ----------- | ------------ |
 | PPO       | ✅ Available | On-policy runner, continuous + discrete actions |
 | DQN       | ✅ Available | Replay buffer, OffPolicyRunner, Double DQN, Dueling DQN |
-| SAC       | 🚧 Planned  | Next Next release |
+| SAC       | ✅ Available | Continuous-control off-policy training, squashed Gaussian actor, twin critics |
 
 ## Development Plan
 
 Near-term roadmap:
 
-- SAC for continuous-control off-policy training
 - Temporal neural network training support for partially observable tasks
 - Recurrent and sequence-model policies such as LSTM, GRU, and Transformer-based agents
 - Sequence-aware training pipelines for rollout collection, hidden-state handling, and truncated backpropagation through time
@@ -90,6 +89,36 @@ runner = OffPolicyRunner(
 runner.learn(total_timesteps=50_000)
 ```
 
+### SAC
+
+```python
+import gymnasium as gym
+import torch
+
+from apexrl.agent.off_policy_runner import OffPolicyRunner
+from apexrl.algorithms.sac import SACConfig
+from apexrl.envs.gym_wrapper import GymVecEnvContinuous
+
+env = GymVecEnvContinuous(
+    [lambda: gym.make("Pendulum-v1") for _ in range(2)],
+    device="cpu",
+)
+
+cfg = SACConfig(
+    batch_size=256,
+    buffer_size=100_000,
+    learning_starts=5_000,
+)
+
+runner = OffPolicyRunner(
+    env=env,
+    cfg=cfg,
+    algorithm="sac",
+    device=torch.device("cpu"),
+)
+runner.learn(total_timesteps=100_000)
+```
+
 ## Smoke Benchmarks
 
 Run the lightweight benchmark suite with:
@@ -107,6 +136,8 @@ Current smoke tasks:
 - `Acrobot-v1` with Dueling DQN
 - `Pendulum-v1` with PPO
 - `MountainCarContinuous-v0` with PPO
+- `Pendulum-v1` with SAC
+- `MountainCarContinuous-v0` with SAC
 
 # License
 

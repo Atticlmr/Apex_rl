@@ -26,7 +26,13 @@ import torch
 import torch.nn as nn
 from gymnasium import spaces
 
-from apexrl.models.base import ContinuousActor, Critic, DiscreteActor, DiscreteQNetwork
+from apexrl.models.base import (
+    ContinuousActor,
+    ContinuousQNetwork,
+    Critic,
+    DiscreteActor,
+    DiscreteQNetwork,
+)
 
 
 def _orthogonal_init(module: nn.Module, gain: float) -> None:
@@ -53,6 +59,17 @@ def _init_q_network(module: nn.Module, output_layer: nn.Module) -> None:
     """Initialize Q networks with stable hidden gains and unit output gain."""
     module.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
     _orthogonal_init(output_layer, 1.0)
+
+
+def _init_sac_policy_network(
+    encoder: nn.Module,
+    mean_head: nn.Module,
+    log_std_head: nn.Module,
+) -> None:
+    """Initialize SAC policy networks with stable hidden gains."""
+    encoder.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
+    _orthogonal_init(mean_head, 0.01)
+    _orthogonal_init(log_std_head, 0.01)
 
 
 def build_mlp(
@@ -641,3 +658,180 @@ class MLPQNetwork(DiscreteQNetwork):
         values = self.value_head(features)
         advantages = self.advantage_head(features)
         return values + advantages - advantages.mean(dim=-1, keepdim=True)
+
+
+class MLPSquashedGaussianActor(ContinuousActor):
+    """State-dependent Gaussian actor with tanh squashing and action scaling.
+
+    This actor is intended for continuous-control algorithms such as SAC.
+    It predicts both the action mean and log standard deviation from the
+    observation, samples in the unconstrained space, then maps actions to the
+    environment bounds.
+    """
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Box,
+        cfg: dict[str, Any] | None = None,
+    ):
+        """Initialize the SAC-style actor."""
+        cfg = cfg or {}
+        cfg.setdefault("use_tanh_squash", True)
+        super().__init__(obs_space, action_space, cfg)
+
+        hidden_dims = cfg.get("hidden_dims", [256, 256])
+        activation = cfg.get("activation", "relu")
+        layer_norm = cfg.get("layer_norm", False)
+
+        if isinstance(obs_space, spaces.Box):
+            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
+        else:
+            raise NotImplementedError(
+                "MLPSquashedGaussianActor only supports Box obs space, "
+                f"got {type(obs_space)}"
+            )
+
+        feature_dim = hidden_dims[-1] if hidden_dims else obs_dim
+        encoder_hidden_dims = hidden_dims[:-1] if hidden_dims else []
+        self.encoder = build_mlp(
+            input_dim=obs_dim,
+            hidden_dims=encoder_hidden_dims,
+            output_dim=feature_dim,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.mean_head = nn.Linear(feature_dim, self.action_dim)
+        self.log_std_head = nn.Linear(feature_dim, self.action_dim)
+        _init_sac_policy_network(self.encoder, self.mean_head, self.log_std_head)
+
+        action_low = torch.as_tensor(action_space.low, dtype=torch.float32)
+        action_high = torch.as_tensor(action_space.high, dtype=torch.float32)
+        self.register_buffer("action_scale", (action_high - action_low) / 2.0)
+        self.register_buffer("action_bias", (action_high + action_low) / 2.0)
+
+    def _flatten_obs(self, obs: torch.Tensor) -> torch.Tensor:
+        if obs.dim() > 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        return obs
+
+    def _distribution_params(
+        self,
+        obs: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        obs = self._flatten_obs(obs)
+        features = self.encoder(obs)
+        mean = self.mean_head(features)
+        log_std = self.log_std_head(features)
+        min_log_std = self.cfg.get("min_log_std", -20.0)
+        max_log_std = self.cfg.get("max_log_std", 2.0)
+        log_std = torch.clamp(log_std, min_log_std, max_log_std)
+        return mean, log_std
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        """Return the mean action in the unconstrained Gaussian space."""
+        mean, _ = self._distribution_params(obs)
+        return mean
+
+    def get_action_dist(self, obs: torch.Tensor) -> torch.distributions.Normal:
+        """Return the Gaussian distribution before tanh squashing."""
+        mean, log_std = self._distribution_params(obs)
+        return torch.distributions.Normal(mean, torch.exp(log_std))
+
+    def _squash_and_scale(
+        self,
+        raw_action: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        squashed_action = torch.tanh(raw_action)
+        action = squashed_action * self.action_scale + self.action_bias
+        return squashed_action, action
+
+    def _log_prob_from_raw(
+        self,
+        dist: torch.distributions.Normal,
+        raw_action: torch.Tensor,
+        squashed_action: torch.Tensor,
+    ) -> torch.Tensor:
+        log_prob = dist.log_prob(raw_action).sum(dim=-1)
+        log_prob -= torch.log(1 - squashed_action.pow(2) + 1e-6).sum(dim=-1)
+        scale_correction = torch.log(self.action_scale.abs() + 1e-6).sum()
+        return log_prob - scale_correction
+
+    def act(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        deterministic: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Sample actions and map them to the environment bounds."""
+        if isinstance(obs, dict):
+            obs = obs["obs"]
+        dist = self.get_action_dist(obs)
+
+        if deterministic:
+            raw_action = dist.mean
+            _, action = self._squash_and_scale(raw_action)
+            log_prob = torch.zeros(action.shape[0], device=action.device)
+            return action, log_prob
+
+        raw_action = dist.rsample()
+        squashed_action, action = self._squash_and_scale(raw_action)
+        log_prob = self._log_prob_from_raw(dist, raw_action, squashed_action)
+        return action, log_prob
+
+    def evaluate(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Evaluate environment-scaled actions under the current policy."""
+        if isinstance(obs, dict):
+            obs = obs["obs"]
+        dist = self.get_action_dist(obs)
+        squashed_actions = (actions - self.action_bias) / (self.action_scale + 1e-6)
+        squashed_actions = torch.clamp(squashed_actions, -0.999, 0.999)
+        raw_actions = torch.atanh(squashed_actions)
+        log_prob = self._log_prob_from_raw(dist, raw_actions, squashed_actions)
+        entropy = dist.entropy().sum(dim=-1)
+        return log_prob, entropy
+
+
+class MLPContinuousQNetwork(ContinuousQNetwork):
+    """MLP-based continuous-action critic returning ``Q(s, a)``."""
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Box,
+        cfg: dict[str, Any] | None = None,
+    ):
+        """Initialize the continuous-action Q-network."""
+        super().__init__(obs_space, action_space, cfg)
+        cfg = cfg or {}
+        hidden_dims = cfg.get("hidden_dims", [256, 256])
+        activation = cfg.get("activation", "relu")
+        layer_norm = cfg.get("layer_norm", False)
+
+        if isinstance(obs_space, spaces.Box):
+            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
+        else:
+            raise NotImplementedError(
+                "MLPContinuousQNetwork only supports Box obs space, "
+                f"got {type(obs_space)}"
+            )
+
+        self.q_net = build_mlp(
+            input_dim=obs_dim + self.action_dim,
+            hidden_dims=hidden_dims,
+            output_dim=1,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        _init_q_network(self, self.q_net[-1])
+
+    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        """Return ``Q(s, a)`` estimates with shape ``(batch_size,)``."""
+        if obs.dim() > 2:
+            obs = obs.reshape(obs.shape[0], -1)
+        if actions.dim() > 2:
+            actions = actions.reshape(actions.shape[0], -1)
+        return self.q_net(torch.cat([obs, actions], dim=-1)).squeeze(-1)

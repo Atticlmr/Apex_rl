@@ -107,7 +107,7 @@ class SACConfig:
         assert self.batch_size > 0, "batch_size must be positive"
         assert self.buffer_size > 0, "buffer_size must be positive"
         assert self.learning_starts >= 0, "learning_starts must be non-negative"
-        assert self.train_freq > 0, "train_freq must be positive"
+        assert self.train_freq > 0,"train_freq must be positive"
         assert self.gradient_steps > 0, "gradient_steps must be positive"
         assert self.target_update_interval > 0, (
             "target_update_interval must be positive"
