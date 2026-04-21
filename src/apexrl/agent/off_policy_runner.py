@@ -180,9 +180,7 @@ class OffPolicyRunner:
 
         if algorithm == "dqn":
             if q_network_class is None:
-                raise ValueError(
-                    "q_network_class is required when creating dqn agent"
-                )
+                raise ValueError("q_network_class is required when creating dqn agent")
             agent = agent_class(
                 env=env,
                 cfg=cfg,

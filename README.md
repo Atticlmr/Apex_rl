@@ -34,10 +34,9 @@ uv pip install -e .
 
 Near-term roadmap:
 
-- Temporal neural network training support for partially observable tasks
-- Recurrent and sequence-model policies such as LSTM, GRU, and Transformer-based agents
-- Sequence-aware training pipelines for rollout collection, hidden-state handling, and truncated backpropagation through time
-- Benchmarks for temporal models on POMDP-style control tasks
+- Fully benchmark test
+- Policy distillation
+- Model-based algorithm
 
 ## Quick Start
 

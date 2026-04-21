@@ -87,8 +87,7 @@ class SAC:
             raise ValueError("SAC requires obs_space and action_space")
         if not isinstance(self.action_space, spaces.Box):
             raise ValueError(
-                "SAC only supports Box action spaces, "
-                f"got {type(self.action_space)}"
+                f"SAC only supports Box action spaces, got {type(self.action_space)}"
             )
         if not isinstance(self.obs_space, spaces.Box):
             raise ValueError(
