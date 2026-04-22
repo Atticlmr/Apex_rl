@@ -287,6 +287,13 @@ Current smoke tasks:
 - `Pendulum-v1` with SAC
 - `MountainCarContinuous-v0` with SAC
 
+## Roadmap
+
+Planned algorithm work for upcoming versions:
+
+- AMP
+- Policy distillation
+
 ## License
 
 Apache-2.0
