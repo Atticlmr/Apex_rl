@@ -25,19 +25,20 @@ from gymnasium import spaces
 class _BaseDictObsEnv(gym.Env):
     metadata = {"render_modes": []}
 
-    def __init__(self, max_steps: int = 5):
+    def __init__(self, max_steps: int = 5, image_dtype: np.dtype = np.float32):
         super().__init__()
         self.max_steps = max_steps
         self.step_count = 0
+        self.image_dtype = np.dtype(image_dtype)
         self.observation_space = spaces.Dict(
             {
                 "obs": spaces.Dict(
                     {
                         "image": spaces.Box(
-                            low=-1.0,
-                            high=1.0,
+                            low=0 if self.image_dtype == np.uint8 else -1.0,
+                            high=255 if self.image_dtype == np.uint8 else 1.0,
                             shape=(1, 4, 4),
-                            dtype=np.float32,
+                            dtype=self.image_dtype,
                         ),
                         "vector": spaces.Box(
                             low=-1.0,
@@ -68,7 +69,11 @@ class _BaseDictObsEnv(gym.Env):
 
     def _get_obs(self) -> dict[str, Any]:
         phase = np.float32((self.step_count % self.max_steps) / max(self.max_steps, 1))
-        image = np.full((1, 4, 4), fill_value=phase, dtype=np.float32)
+        if self.image_dtype == np.uint8:
+            image_value = np.uint8(round(float(phase) * 255.0))
+        else:
+            image_value = phase
+        image = np.full((1, 4, 4), fill_value=image_value, dtype=self.image_dtype)
         vector = np.array([phase, phase + 0.1, phase + 0.2], dtype=np.float32)
         privileged_state = np.array(
             [phase, phase + 0.25, phase + 0.5, phase + 0.75, phase + 1.0],
@@ -101,8 +106,8 @@ class _BaseDictObsEnv(gym.Env):
 class DictObsDiscreteEnv(_BaseDictObsEnv):
     """Discrete-action env with nested actor obs and privileged critic obs."""
 
-    def __init__(self, max_steps: int = 5):
-        super().__init__(max_steps=max_steps)
+    def __init__(self, max_steps: int = 5, image_dtype: np.dtype = np.float32):
+        super().__init__(max_steps=max_steps, image_dtype=image_dtype)
         self.action_space = spaces.Discrete(2)
 
     def step(self, action: int):
@@ -115,8 +120,8 @@ class DictObsDiscreteEnv(_BaseDictObsEnv):
 class DictObsContinuousEnv(_BaseDictObsEnv):
     """Continuous-action env with nested actor obs and privileged critic obs."""
 
-    def __init__(self, max_steps: int = 5):
-        super().__init__(max_steps=max_steps)
+    def __init__(self, max_steps: int = 5, image_dtype: np.dtype = np.float32):
+        super().__init__(max_steps=max_steps, image_dtype=image_dtype)
         self.action_space = spaces.Box(
             low=-1.0,
             high=1.0,
@@ -141,3 +146,8 @@ def make_multimodal_discrete_env() -> DictObsDiscreteEnv:
 def make_multimodal_continuous_env() -> DictObsContinuousEnv:
     """Factory for a nested continuous observation env."""
     return DictObsContinuousEnv()
+
+
+def make_uint8_multimodal_discrete_env() -> DictObsDiscreteEnv:
+    """Factory for a nested discrete observation env with raw uint8 images."""
+    return DictObsDiscreteEnv(image_dtype=np.uint8)

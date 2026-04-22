@@ -83,7 +83,11 @@ class GymVecEnv(VecEnv):
         # Infer dimensions BEFORE calling super().__init__
         actor_obs_space = actor_space_from_observation_space(self._obs_space)
         actor_obs_spec = space_to_spec(actor_obs_space)
-        self.obs_shape = actor_obs_spec if isinstance(actor_obs_spec, tuple) else ()
+        self.obs_shape = (
+            getattr(actor_obs_spec, "shape", ())
+            if not isinstance(actor_obs_spec, dict)
+            else ()
+        )
         self.num_obs = spec_numel(actor_obs_spec)
         privileged_obs_space = split_actor_critic_observations(
             space_to_spec(self._obs_space)
@@ -143,7 +147,7 @@ class GymVecEnv(VecEnv):
 
     def _obs_to_tensor(self, obs: np.ndarray | dict[str, Any]) -> Any:
         """Convert numpy observation to tensor."""
-        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+        return observation_to_tensor(obs, device=self.device)
 
     def reset(self) -> Any:
         """Reset all environments."""
@@ -283,7 +287,11 @@ class GymVecEnvContinuous(VecEnv):
         # Infer dimensions BEFORE calling super().__init__
         actor_obs_space = actor_space_from_observation_space(self._obs_space)
         actor_obs_spec = space_to_spec(actor_obs_space)
-        self.obs_shape = actor_obs_spec if isinstance(actor_obs_spec, tuple) else ()
+        self.obs_shape = (
+            getattr(actor_obs_spec, "shape", ())
+            if not isinstance(actor_obs_spec, dict)
+            else ()
+        )
         self.num_obs = spec_numel(actor_obs_spec)
         privileged_obs_space = split_actor_critic_observations(
             space_to_spec(self._obs_space)
@@ -353,7 +361,7 @@ class GymVecEnvContinuous(VecEnv):
 
     def _obs_to_tensor(self, obs: np.ndarray | dict[str, Any]) -> Any:
         """Convert numpy observation to tensor."""
-        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+        return observation_to_tensor(obs, device=self.device)
 
     def reset(self) -> Any:
         """Reset all environments."""

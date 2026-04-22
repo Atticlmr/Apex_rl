@@ -21,7 +21,7 @@ from apexrl.algorithms.ppo import PPO, PPOConfig
 from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.gym_wrapper import GymVecEnv, GymVecEnvContinuous
 from apexrl.models import MLPActor, MLPCritic, MLPDiscreteActor
-from helpers import make_multimodal_discrete_env
+from helpers import make_multimodal_discrete_env, make_uint8_multimodal_discrete_env
 
 
 def test_rollout_buffer_supports_continuous_actions():
@@ -101,6 +101,20 @@ def test_gym_vecenv_reports_truncation_metadata():
     assert extras["time_outs"].tolist() == [True]
     assert extras["terminated"].tolist() == [False]
     assert extras["final_observation"].shape == env.obs_buf.shape
+    env.close()
+
+
+def test_gym_vecenv_preserves_structured_leaf_dtypes():
+    """Gym wrappers should keep raw per-leaf dtypes for structured observations."""
+    env = GymVecEnv(
+        [make_uint8_multimodal_discrete_env for _ in range(2)],
+        device="cpu",
+    )
+
+    obs = env.reset()
+    assert obs["obs"]["image"].dtype == torch.uint8
+    assert obs["obs"]["vector"].dtype == torch.float32
+    assert obs["privileged_obs"]["state"].dtype == torch.float32
     env.close()
 
 

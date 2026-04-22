@@ -231,7 +231,7 @@ class SAC:
 
     def _to_tensor_observation(self, obs: Any) -> Any:
         """Convert environment observations to tensors on the agent device."""
-        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+        return observation_to_tensor(obs, device=self.device)
 
     def _split_observations(self, obs: Any) -> tuple[Any, Any | None]:
         """Split full observations into actor and critic branches."""

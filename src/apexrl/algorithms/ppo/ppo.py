@@ -38,7 +38,6 @@ from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
 from apexrl.optimizers import get_optimizer
 from apexrl.utils import (
     actor_space_from_observation_space,
-    clone_observation,
     critic_space_from_observation_space,
     observation_batch_size,
     observation_index,
@@ -366,8 +365,13 @@ class PPO:
             # Sample actions
             with torch.no_grad():
                 actions, log_probs = self.actor.act(obs, deterministic=False)
+                critic_obs = (
+                    privileged_obs
+                    if self.cfg.use_asymmetric and privileged_obs is not None
+                    else obs
+                )
                 values = self.critic.get_value(
-                    privileged_obs if self.cfg.use_asymmetric and privileged_obs is not None else obs
+                    critic_obs
                 )
 
             # Step environment
@@ -395,7 +399,9 @@ class PPO:
                 final_obs = extras.get("final_observation")
                 if final_obs is not None:
                     final_obs = self._to_tensor_observation(final_obs)
-                    final_obs, final_privileged_obs = self._split_observations(final_obs)
+                    final_obs, final_privileged_obs = self._split_observations(
+                        final_obs
+                    )
                     critic_final_obs = (
                         final_privileged_obs
                         if self.cfg.use_asymmetric and final_privileged_obs is not None
@@ -443,8 +449,13 @@ class PPO:
 
         # Compute returns and advantages
         with torch.no_grad():
+            critic_obs = (
+                privileged_obs
+                if self.cfg.use_asymmetric and privileged_obs is not None
+                else obs
+            )
             last_values = self.critic.get_value(
-                privileged_obs if self.cfg.use_asymmetric and privileged_obs is not None else obs
+                critic_obs
             )
 
         self.rollout_buffer.compute_returns_and_advantages(
@@ -476,7 +487,7 @@ class PPO:
 
     def _to_tensor_observation(self, obs: Any) -> Any:
         """Normalize environment observations to tensors on the training device."""
-        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+        return observation_to_tensor(obs, device=self.device)
 
     def _to_bool_tensor(
         self,

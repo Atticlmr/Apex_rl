@@ -67,6 +67,12 @@ In this format:
 - PPO asymmetric critic receives `privileged_obs`
 - SAC stores actor and critic observation branches separately in replay
 
+Current behavior:
+
+- Env wrappers and buffers preserve the original dtype of each observation leaf, including raw `uint8` image branches and non-floating leaves in structured observations.
+- Default MLP-based models still flatten structured observations into `float32` feature tensors internally, so existing vector-style training flows continue to work.
+- Custom multimodal encoders receive the original per-leaf dtypes and can apply dtype-specific preprocessing explicitly inside the model.
+
 ## Quick Start
 
 ### PPO on a discrete Gymnasium task

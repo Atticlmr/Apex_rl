@@ -21,7 +21,8 @@ from apexrl.algorithms.dqn import DQN, DQNConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.envs.gym_wrapper import GymVecEnv
 from apexrl.models import MLPQNetwork
-from helpers import make_multimodal_discrete_env
+from apexrl.utils import space_to_spec
+from helpers import make_multimodal_discrete_env, make_uint8_multimodal_discrete_env
 
 
 def test_replay_buffer_supports_discrete_actions():
@@ -74,6 +75,33 @@ def test_replay_buffer_supports_structured_observations():
     assert set(batch["observations"].keys()) == {"image", "vector"}
     assert batch["observations"]["image"].shape == (4, 1, 4, 4)
     assert batch["observations"]["vector"].shape == (4, 3)
+
+
+def test_replay_buffer_preserves_structured_leaf_dtypes_from_space_spec():
+    """Replay buffer storage should honor per-leaf dtypes from observation spaces."""
+    env = make_uint8_multimodal_discrete_env()
+    buffer = ReplayBuffer(
+        capacity=8,
+        obs_shape=space_to_spec(env.observation_space.spaces["obs"]),
+        action_shape=(),
+        device="cpu",
+    )
+
+    observations = {
+        "image": torch.randint(0, 256, (4, 1, 4, 4), dtype=torch.uint8),
+        "vector": torch.randn(4, 3),
+    }
+    buffer.add(
+        observations=observations,
+        actions=torch.tensor([0, 1, 0, 1]),
+        rewards=torch.randn(4),
+        next_observations=observations,
+        dones=torch.tensor([0.0, 1.0, 0.0, 1.0]),
+    )
+
+    batch = buffer.sample(4)
+    assert batch["observations"]["image"].dtype == torch.uint8
+    assert batch["observations"]["vector"].dtype == torch.float32
 
 
 def test_dqn_update_smoke():
@@ -195,6 +223,35 @@ def test_dqn_supports_multimodal_tensordict_obs():
     """DQN should train with nested actor observations carried in TensorDicts."""
     env = GymVecEnv(
         [make_multimodal_discrete_env for _ in range(2)],
+        device="cpu",
+    )
+    cfg = DQNConfig(
+        batch_size=8,
+        buffer_size=128,
+        learning_starts=8,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=0,
+        save_interval=0,
+    )
+    runner = OffPolicyRunner(
+        env=env,
+        cfg=cfg,
+        q_network_class=MLPQNetwork,
+        device=torch.device("cpu"),
+    )
+
+    result = runner.learn(total_timesteps=32)
+    assert result["total_timesteps"] >= 32
+    assert runner.agent.num_updates > 0
+    runner.close()
+
+
+def test_dqn_supports_uint8_multimodal_tensordict_obs():
+    """DQN default MLP path should still train when image leaves stay uint8."""
+    env = GymVecEnv(
+        [make_uint8_multimodal_discrete_env for _ in range(2)],
         device="cpu",
     )
     cfg = DQNConfig(

@@ -117,7 +117,7 @@ class DQN:
 
     def _to_tensor_observation(self, obs: Any) -> Any:
         """Convert observations to tensors or TensorDicts on the agent device."""
-        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+        return observation_to_tensor(obs, device=self.device)
 
     def _actor_observation(self, obs: Any) -> Any:
         """Extract the actor-visible observation branch."""

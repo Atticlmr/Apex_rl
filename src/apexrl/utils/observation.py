@@ -15,8 +15,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, TypeAlias
 
+import numpy as np
 import torch
 from gymnasium import spaces
 
@@ -51,7 +53,19 @@ except ImportError:  # pragma: no cover
 
 TensorDict = _TensorDict
 Observation: TypeAlias = torch.Tensor | TensorDict
-ObservationSpec: TypeAlias = tuple[int, ...] | dict[str, "ObservationSpec"]
+
+
+@dataclass(frozen=True)
+class TensorLeafSpec:
+    """Leaf tensor metadata for structured observation storage."""
+
+    shape: tuple[int, ...]
+    dtype: torch.dtype
+
+
+ObservationSpec: TypeAlias = (
+    TensorLeafSpec | tuple[int, ...] | dict[str, "ObservationSpec"]
+)
 
 
 def _is_tensordict(value: Any) -> bool:
@@ -107,15 +121,24 @@ def observation_batch_size(value: Observation) -> int:
     return int(tensor.shape[0])
 
 
+def _space_dtype_to_torch(space_dtype: Any) -> torch.dtype:
+    """Convert a Gymnasium / NumPy dtype to the matching torch dtype."""
+    np_dtype = np.dtype(space_dtype)
+    return torch.from_numpy(np.zeros((), dtype=np_dtype)).dtype
+
+
 def space_to_spec(space: spaces.Space) -> ObservationSpec:
     """Convert a Gymnasium space to a recursive observation spec."""
     if isinstance(space, spaces.Dict):
         return {key: space_to_spec(subspace) for key, subspace in space.spaces.items()}
     if isinstance(space, spaces.Discrete):
-        return (1,)
+        return TensorLeafSpec((1,), torch.long)
     if getattr(space, "shape", None) is not None:
         shape = tuple(space.shape)
-        return shape if shape else (1,)
+        return TensorLeafSpec(
+            shape if shape else (1,),
+            _space_dtype_to_torch(getattr(space, "dtype", np.float32)),
+        )
     raise NotImplementedError(f"Unsupported observation space type: {type(space)}")
 
 
@@ -123,6 +146,8 @@ def spec_numel(spec: ObservationSpec) -> int:
     """Return the flattened number of elements in a recursive observation spec."""
     if isinstance(spec, dict):
         return sum(spec_numel(value) for value in spec.values())
+    if isinstance(spec, TensorLeafSpec):
+        return int(torch.tensor(spec.shape).prod().item()) if spec.shape else 1
     return int(torch.tensor(spec).prod().item()) if spec else 1
 
 
@@ -147,7 +172,7 @@ def critic_space_from_observation_space(obs_space: spaces.Space) -> spaces.Space
 def observation_to_tensor(
     observation: Any,
     device: torch.device | str,
-    dtype: torch.dtype = torch.float32,
+    dtype: torch.dtype | None = None,
 ) -> Observation:
     """Recursively convert observations to tensors or TensorDicts."""
     if isinstance(observation, tuple):
@@ -167,9 +192,12 @@ def observation_to_tensor(
         }
         return _wrap_tensordict(converted, batch_size=[])
     if not isinstance(observation, torch.Tensor):
-        return torch.as_tensor(observation, dtype=dtype, device=device)
+        kwargs = {"device": device}
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        return torch.as_tensor(observation, **kwargs)
     kwargs = {"device": device}
-    if observation.is_floating_point():
+    if dtype is not None and observation.is_floating_point():
         kwargs["dtype"] = dtype
     return observation.to(**kwargs)
 
@@ -244,7 +272,8 @@ def flatten_time_env_observation(observation: Observation) -> Observation:
     """Flatten leading ``(time, env)`` dimensions of an observation tree."""
     if _is_observation_mapping(observation):
         flattened = {
-            key: flatten_time_env_observation(value) for key, value in observation.items()
+            key: flatten_time_env_observation(value)
+            for key, value in observation.items()
         }
         first_leaf = next(iter(flattened.values()), None)
         batch_size = infer_batch_size(first_leaf)
@@ -264,6 +293,7 @@ def flatten_observation(observation: Observation) -> torch.Tensor:
             return flat_parts[0]
         return torch.cat(flat_parts, dim=-1)
 
+    observation = observation.to(dtype=torch.float32)
     if observation.dim() == 0:
         return observation.reshape(1, 1)
     if observation.dim() == 1:
@@ -285,6 +315,12 @@ def allocate_observation_storage(
                 for key, value in spec.items()
             },
             batch_size=prefix_shape,
+        )
+    if isinstance(spec, TensorLeafSpec):
+        return torch.zeros(
+            (*prefix_shape, *spec.shape),
+            device=device,
+            dtype=spec.dtype,
         )
     return torch.zeros((*prefix_shape, *spec), device=device, dtype=dtype)
 
