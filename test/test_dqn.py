@@ -275,3 +275,30 @@ def test_dqn_supports_uint8_multimodal_tensordict_obs():
     assert result["total_timesteps"] >= 32
     assert runner.agent.num_updates > 0
     runner.close()
+
+
+def test_dqn_supports_muon_optimizer():
+    """DQN should train with the mixed Muon optimizer path."""
+    env = GymVecEnv([lambda: gym.make("CartPole-v1") for _ in range(2)], device="cpu")
+    cfg = DQNConfig(
+        optimizer="muon",
+        batch_size=8,
+        buffer_size=128,
+        learning_starts=8,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=0,
+        save_interval=0,
+    )
+    runner = OffPolicyRunner(
+        env=env,
+        cfg=cfg,
+        q_network_class=MLPQNetwork,
+        device=torch.device("cpu"),
+    )
+
+    result = runner.learn(total_timesteps=32)
+    assert result["total_timesteps"] >= 32
+    assert runner.agent.num_updates > 0
+    runner.close()

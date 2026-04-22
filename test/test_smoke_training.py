@@ -199,3 +199,32 @@ def test_ppo_supports_multimodal_and_privileged_obs():
     assert "rollout/mean_reward" in rollout_stats
     assert "train/policy_loss" in update_stats
     env.close()
+
+
+def test_ppo_supports_muon_optimizer():
+    """PPO should train with the integrated mixed Muon optimizer path."""
+    env = GymVecEnvContinuous(
+        [lambda: gym.make("Pendulum-v1") for _ in range(2)],
+        device="cpu",
+    )
+    cfg = PPOConfig(
+        num_steps=8,
+        num_epochs=1,
+        minibatch_size=8,
+        learning_rate_schedule="constant",
+        optimizer="muon",
+        device="cpu",
+    )
+    agent = PPO(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+
+    rollout_stats = agent.collect_rollout()
+    update_stats = agent.update()
+    assert "rollout/mean_reward" in rollout_stats
+    assert "train/policy_loss" in update_stats
+    env.close()

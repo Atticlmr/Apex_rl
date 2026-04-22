@@ -166,3 +166,29 @@ def test_sac_supports_multimodal_and_privileged_obs():
     assert result["total_timesteps"] >= 32
     assert agent.num_updates > 0
     env.close()
+
+
+def test_sac_supports_muon_optimizer():
+    """SAC should train with the mixed Muon optimizer path."""
+    env = GymVecEnvContinuous(
+        [lambda: gym.make("Pendulum-v1") for _ in range(2)],
+        device="cpu",
+    )
+    cfg = SACConfig(
+        optimizer="muon",
+        batch_size=8,
+        buffer_size=128,
+        learning_starts=8,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=0,
+        save_interval=0,
+        device="cpu",
+    )
+    agent = SAC(env=env, cfg=cfg, device=torch.device("cpu"))
+
+    result = agent.learn(total_timesteps=32)
+    assert result["total_timesteps"] >= 32
+    assert agent.num_updates > 0
+    env.close()

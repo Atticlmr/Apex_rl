@@ -35,7 +35,7 @@ from apexrl.algorithms.ppo.config import PPOConfig
 from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.vecenv import VecEnv
 from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
-from apexrl.optimizers import get_optimizer
+from apexrl.optimizers import build_optimizer
 from apexrl.utils import (
     actor_space_from_observation_space,
     critic_space_from_observation_space,
@@ -219,24 +219,25 @@ class PPO:
             )
 
         # Initialize optimizer
-        optimizer_cls = get_optimizer(self.cfg.optimizer)
-
         if self.cfg.use_policy_optimizer:
             # Separate optimizers for policy and value
-            self.policy_optimizer = optimizer_cls(
-                self.actor.parameters(),
+            self.policy_optimizer = build_optimizer(
+                self.cfg.optimizer,
                 lr=self.cfg.policy_learning_rate,
+                modules=self.actor,
             )
-            self.value_optimizer = optimizer_cls(
-                self.critic.parameters(),
+            self.value_optimizer = build_optimizer(
+                self.cfg.optimizer,
                 lr=self.cfg.value_learning_rate,
+                modules=self.critic,
             )
             self.optimizer = None
         else:
             # Joint optimizer
-            self.optimizer = optimizer_cls(
-                list(self.actor.parameters()) + list(self.critic.parameters()),
+            self.optimizer = build_optimizer(
+                self.cfg.optimizer,
                 lr=self.cfg.learning_rate,
+                modules=[self.actor, self.critic],
             )
             self.policy_optimizer = None
             self.value_optimizer = None
@@ -724,16 +725,16 @@ class PPO:
         # Update optimizer learning rates
         if self.optimizer is not None:
             for param_group in self.optimizer.param_groups:
-                param_group["lr"] = new_lr
+                param_group["lr"] = new_lr * param_group.get("_apexrl_lr_scale", 1.0)
         else:
             for param_group in self.policy_optimizer.param_groups:
                 param_group["lr"] = new_lr * (
                     self.cfg.policy_learning_rate / self.cfg.learning_rate
-                )
+                ) * param_group.get("_apexrl_lr_scale", 1.0)
             for param_group in self.value_optimizer.param_groups:
                 param_group["lr"] = new_lr * (
                     self.cfg.value_learning_rate / self.cfg.learning_rate
-                )
+                ) * param_group.get("_apexrl_lr_scale", 1.0)
 
     def learn(self, total_timesteps: int | None = None) -> dict[str, Any]:
         """Train through the canonical OnPolicyRunner entrypoint."""

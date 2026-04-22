@@ -35,7 +35,7 @@ from gymnasium import spaces
 from apexrl.algorithms.sac.config import SACConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.models import MLPContinuousQNetwork, MLPSquashedGaussianActor
-from apexrl.optimizers import get_optimizer
+from apexrl.optimizers import build_optimizer
 from apexrl.utils import (
     actor_space_from_observation_space,
     critic_space_from_observation_space,
@@ -142,18 +142,20 @@ class SAC:
         self.target_critic1.eval()
         self.target_critic2.eval()
 
-        optimizer_cls = get_optimizer(self.cfg.optimizer)
-        self.actor_optimizer = optimizer_cls(
-            self.actor.parameters(),
+        self.actor_optimizer = build_optimizer(
+            self.cfg.optimizer,
             lr=self.cfg.actor_learning_rate,
+            modules=self.actor,
         )
-        self.critic1_optimizer = optimizer_cls(
-            self.critic1.parameters(),
+        self.critic1_optimizer = build_optimizer(
+            self.cfg.optimizer,
             lr=self.cfg.critic_learning_rate,
+            modules=self.critic1,
         )
-        self.critic2_optimizer = optimizer_cls(
-            self.critic2.parameters(),
+        self.critic2_optimizer = build_optimizer(
+            self.cfg.optimizer,
             lr=self.cfg.critic_learning_rate,
+            modules=self.critic2,
         )
 
         self.auto_alpha = self.cfg.auto_alpha

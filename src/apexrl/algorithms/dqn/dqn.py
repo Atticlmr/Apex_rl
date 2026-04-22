@@ -24,7 +24,7 @@ from gymnasium import spaces
 
 from apexrl.algorithms.dqn.config import DQNConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
-from apexrl.optimizers import get_optimizer
+from apexrl.optimizers import build_optimizer
 from apexrl.utils import (
     actor_space_from_observation_space,
     observation_to_tensor,
@@ -82,10 +82,10 @@ class DQN:
         self.target_q_network = copy.deepcopy(self.q_network).to(self.device)
         self.target_q_network.eval()
 
-        optimizer_cls = get_optimizer(self.cfg.optimizer)
-        self.optimizer = optimizer_cls(
-            self.q_network.parameters(),
+        self.optimizer = build_optimizer(
+            self.cfg.optimizer,
             lr=self.cfg.learning_rate,
+            modules=self.q_network,
         )
 
         self.replay_buffer = ReplayBuffer(
