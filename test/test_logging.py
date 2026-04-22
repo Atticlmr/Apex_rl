@@ -18,6 +18,7 @@ import importlib.util
 import sys
 import time
 import types
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,6 +42,7 @@ if "tensordict" not in sys.modules and importlib.util.find_spec("tensordict") is
 
 from apexrl.agent.on_policy_runner import OnPolicyRunner
 from apexrl.algorithms.ppo.config import PPOConfig
+from apexrl.utils.logger import Logger, SwanLabLogger, WandbLogger
 
 
 class DummyLogger:
@@ -51,6 +53,67 @@ class DummyLogger:
 
     def log_scalars(self, scalars, step):
         self.calls.append((dict(scalars), step))
+
+
+class _ConfigRecorder:
+    def __init__(self):
+        self.updates = []
+
+    def update(self, config):
+        self.updates.append(dict(config))
+
+
+class FakeWandbModule(types.ModuleType):
+    def __init__(self):
+        super().__init__("wandb")
+        self.init_calls = []
+        self.log_calls = []
+        self.finish_calls = 0
+        self.config = _ConfigRecorder()
+
+    def init(self, **kwargs):
+        self.init_calls.append(dict(kwargs))
+
+    def log(self, data, step=None):
+        self.log_calls.append((dict(data), step))
+
+    def finish(self):
+        self.finish_calls += 1
+
+    class Histogram:
+        def __init__(self, values):
+            self.values = values
+
+    class Image:
+        def __init__(self, image):
+            self.image = image
+
+    class Video:
+        def __init__(self, video, fps=30):
+            self.video = video
+            self.fps = fps
+
+
+class FakeSwanLabModule(types.ModuleType):
+    def __init__(self):
+        super().__init__("swanlab")
+        self.init_calls = []
+        self.log_calls = []
+        self.finish_calls = 0
+        self.config = _ConfigRecorder()
+
+    def init(self, **kwargs):
+        self.init_calls.append(dict(kwargs))
+
+    def log(self, data, step=None):
+        self.log_calls.append((dict(data), step))
+
+    def finish(self):
+        self.finish_calls += 1
+
+    class Image:
+        def __init__(self, image):
+            self.image = image
 
 
 def test_on_policy_runner_logging_defaults_avoid_redundant_metrics():
@@ -97,6 +160,84 @@ def test_on_policy_runner_logging_defaults_avoid_redundant_metrics():
     assert "rollout/mean_episode_reward" not in logged_keys
     assert "episode/mean_reward" in logged_keys
     assert "rollout/completed_episodes" in logged_keys
+
+
+def test_wandb_logger_backend_integration(monkeypatch, tmp_path):
+    """Logger factory should initialize and drive the wandb backend."""
+    fake_wandb = FakeWandbModule()
+    monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+
+    logger = Logger.create(
+        "wandb",
+        experiment_name="ppo_exp",
+        log_dir=str(tmp_path),
+        project="apexrl",
+        entity="team",
+        tags=["ppo"],
+    )
+
+    assert isinstance(logger, WandbLogger)
+    assert fake_wandb.init_calls == [
+        {
+            "project": "apexrl",
+            "entity": "team",
+            "name": "ppo_exp",
+            "dir": str(tmp_path),
+            "tags": ["ppo"],
+            "resume": None,
+        }
+    ]
+
+    logger.log_scalars({"train/loss": 0.1, "episode/reward": 10.0}, step=12)
+    logger.log_config({"lr": 3e-4, "algo": "ppo"})
+    logger.close()
+
+    assert fake_wandb.log_calls == [
+        ({"train/loss": 0.1, "episode/reward": 10.0}, 12)
+    ]
+    assert fake_wandb.config.updates == [{"lr": 3e-4, "algo": "ppo"}]
+    assert fake_wandb.finish_calls == 1
+
+
+def test_swanlab_logger_backend_integration(monkeypatch, tmp_path):
+    """Logger factory should initialize and drive the SwanLab backend."""
+    fake_swanlab = FakeSwanLabModule()
+    monkeypatch.setitem(sys.modules, "swanlab", fake_swanlab)
+
+    logger = Logger.create(
+        "swanlab",
+        experiment_name="dqn_exp",
+        log_dir=str(tmp_path),
+        project="apexrl",
+        experiment_description="debug run",
+    )
+
+    assert isinstance(logger, SwanLabLogger)
+    assert fake_swanlab.init_calls == [
+        {
+            "project": "apexrl",
+            "experiment_name": "dqn_exp",
+            "description": "debug run",
+            "logdir": str(tmp_path),
+        }
+    ]
+
+    logger.log_scalars({"train/q_loss": 0.2}, step=7)
+    logger.log_config({"buffer_size": 1024})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        logger.log_video("rollout/video", "clip.mp4", step=7, fps=24)
+    logger.close()
+
+    assert fake_swanlab.log_calls[0] == ({"train/q_loss": 0.2}, 7)
+    assert fake_swanlab.config.updates == [{"buffer_size": 1024}]
+    assert fake_swanlab.log_calls[1] == (
+        {"rollout/video": "[Video at step 7]"},
+        7,
+    )
+    assert fake_swanlab.finish_calls == 1
+    assert caught
+    assert "not fully supported" in str(caught[0].message)
 
 
 if __name__ == "__main__":

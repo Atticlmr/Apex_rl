@@ -22,9 +22,23 @@ cd Apex_rl
 uv pip install -e .
 ```
 
+Optional logging extras:
+
+```bash
+pip install -e ".[wandb]"
+pip install -e ".[swanlab]"
+```
+
+or with `uv`:
+
+```bash
+uv pip install -e ".[wandb]"
+uv pip install -e ".[swanlab]"
+```
+
 Core runtime dependencies:
 
-- Python >= 3.11
+- Python >= 3.10
 - PyTorch >= 2.0
 - Gymnasium >= 0.29
 - TensorDict >= 0.6
@@ -116,6 +130,45 @@ runner = OnPolicyRunner(
 runner.learn(total_timesteps=100_000)
 runner.close()
 ```
+
+## Logging Backends
+
+The runner and algorithm configs support three logging backends:
+
+- `tensorboard`
+- `wandb`
+- `swanlab`
+
+`TensorBoard` works with the default install. `wandb` and `swanlab` require the
+matching optional extras shown above.
+
+Choose one backend per run:
+
+```python
+cfg = PPOConfig(
+    logger_backend="wandb",
+    logger_kwargs={
+        "project": "apexrl",
+        "entity": "your_team",
+        "tags": ["ppo", "cartpole"],
+    },
+)
+```
+
+SwanLab example:
+
+```python
+cfg = PPOConfig(
+    logger_backend="swanlab",
+    logger_kwargs={
+        "project": "apexrl",
+        "experiment_description": "PPO CartPole run",
+    },
+)
+```
+
+The same `logger_backend` and `logger_kwargs` fields are available in
+`PPOConfig`, `DQNConfig`, and `SACConfig`.
 
 ### PPO on a continuous Gymnasium task
 

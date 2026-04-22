@@ -7,12 +7,12 @@ license = {text = "Apache-2.0"}
 authors = [
     { name = "Atticli", email = "Atticlmr@gmail.com" }
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0.0",
     "numpy>=1.24.0",
     "gymnasium>=0.29.0",
-    "tensordict>=0.6.0",
+    "tensordict>=0.6.0,<0.12.2",
     "tensorboard>=2.15.0",
 ]
 
@@ -24,6 +24,12 @@ dev = [
 test = [
     "pytest",
     "pytest-cov",
+]
+wandb = [
+    "wandb>=0.18.0",
+]
+swanlab = [
+    "swanlab>=0.5.0",
 ]
 
 [build-system]

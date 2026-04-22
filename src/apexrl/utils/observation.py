@@ -83,6 +83,14 @@ def _wrap_tensordict(
     return TensorDict(source, batch_size=batch_size)
 
 
+def _observation_keys(value: Observation) -> list[str]:
+    if _is_tensordict(value):
+        return list(value.keys())
+    if isinstance(value, dict):
+        return list(value.keys())
+    raise TypeError("Observation is not a mapping")
+
+
 def _normalized_batch_size(batch_size: Any) -> tuple[int, ...] | None:
     if batch_size is None:
         return None
@@ -207,7 +215,8 @@ def stack_observations(observations: list[Observation]) -> Observation:
     first = observations[0]
     if _is_observation_mapping(first):
         stacked = {
-            key: stack_observations([obs[key] for obs in observations]) for key in first
+            key: stack_observations([obs[key] for obs in observations])
+            for key in _observation_keys(first)
         }
         batch_size = _normalized_batch_size(getattr(first, "batch_size", None))
         if batch_size is None:
@@ -262,7 +271,7 @@ def observation_set_index(
     if _is_observation_mapping(destination):
         if not _is_observation_mapping(value):
             raise TypeError("Observation tree structures must match")
-        for key in destination:
+        for key in _observation_keys(destination):
             observation_set_index(destination[key], index, value[key])
         return
     destination[index] = value
@@ -286,7 +295,9 @@ def flatten_time_env_observation(observation: Observation) -> Observation:
 def flatten_observation(observation: Observation) -> torch.Tensor:
     """Flatten recursive observation trees into feature tensors."""
     if _is_observation_mapping(observation):
-        flat_parts = [flatten_observation(observation[key]) for key in observation]
+        flat_parts = [
+            flatten_observation(observation[key]) for key in _observation_keys(observation)
+        ]
         if not flat_parts:
             raise ValueError("Observation TensorDict is empty")
         if len(flat_parts) == 1:
