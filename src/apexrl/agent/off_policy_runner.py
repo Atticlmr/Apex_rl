@@ -24,6 +24,7 @@ import torch
 from gymnasium import spaces
 
 from apexrl.envs.vecenv import VecEnv
+from apexrl.utils import clone_observation, observation_index, observation_set_index
 from apexrl.utils.logger import Logger
 
 
@@ -299,11 +300,15 @@ class OffPolicyRunner:
                     terminated = dones & ~truncated
                 terminated = self._to_bool_tensor(terminated, dones, default=False)
 
-                next_obs_for_buffer = next_obs.clone()
+                next_obs_for_buffer = clone_observation(next_obs)
                 final_obs = extras.get("final_observation")
                 if final_obs is not None:
                     final_obs = self.agent._to_tensor_observation(final_obs)
-                    next_obs_for_buffer[dones] = final_obs[dones]
+                    observation_set_index(
+                        next_obs_for_buffer,
+                        dones,
+                        observation_index(final_obs, dones),
+                    )
 
                 self.agent.store_transition(
                     observations=obs,

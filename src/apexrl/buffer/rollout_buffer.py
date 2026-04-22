@@ -18,7 +18,17 @@ Supports multi-dimensional observations (e.g., images) and flexible storage.
 
 from __future__ import annotations
 
+from typing import Any
+
 import torch
+
+from apexrl.utils import (
+    allocate_observation_storage,
+    flatten_time_env_observation,
+    observation_index,
+    observation_set_index,
+    observation_to_device,
+)
 
 
 class RolloutBuffer:
@@ -40,11 +50,12 @@ class RolloutBuffer:
         self,
         num_envs: int,
         num_steps: int,
-        obs_shape: tuple[int, ...],
+        obs_shape: Any,
         action_shape: tuple[int, ...],
         action_dtype: torch.dtype,
         device: torch.device,
         num_privileged_obs: int = 0,
+        privileged_obs_shape: Any | None = None,
     ):
         """Initialize the rollout buffer.
 
@@ -66,19 +77,22 @@ class RolloutBuffer:
         self.action_dtype = action_dtype
         self.device = device
         self.num_privileged_obs = num_privileged_obs
+        self.privileged_obs_shape = privileged_obs_shape
 
         # Buffers for rollout data
         # Shape: (num_steps, num_envs, *obs_shape)
-        self.observations = torch.zeros(
-            (num_steps, num_envs, *obs_shape),
+        self.observations = allocate_observation_storage(
+            (num_steps, num_envs),
+            obs_shape,
             device=device,
             dtype=torch.float32,
         )
 
         # Privileged observations buffer (if using asymmetric critic)
-        if num_privileged_obs > 0:
-            self.privileged_observations = torch.zeros(
-                (num_steps, num_envs, num_privileged_obs),
+        if privileged_obs_shape is not None:
+            self.privileged_observations = allocate_observation_storage(
+                (num_steps, num_envs),
+                privileged_obs_shape,
                 device=device,
                 dtype=torch.float32,
             )
@@ -116,8 +130,8 @@ class RolloutBuffer:
 
     def add(
         self,
-        observations: torch.Tensor,
-        privileged_observations: torch.Tensor | None,
+        observations: Any,
+        privileged_observations: Any | None,
         actions: torch.Tensor,
         rewards: torch.Tensor,
         dones: torch.Tensor,
@@ -139,12 +153,16 @@ class RolloutBuffer:
         if self.step >= self.num_steps:
             raise ValueError(f"Rollout buffer is full (capacity: {self.num_steps})")
 
-        self.observations[self.step].copy_(observations)
+        observation_set_index(self.observations, self.step, observations)
         if (
             self.privileged_observations is not None
             and privileged_observations is not None
         ):
-            self.privileged_observations[self.step].copy_(privileged_observations)
+            observation_set_index(
+                self.privileged_observations,
+                self.step,
+                privileged_observations,
+            )
         self.actions[self.step].copy_(actions)
         self.rewards[self.step].copy_(rewards)
         self.dones[self.step].copy_(dones)
@@ -193,7 +211,7 @@ class RolloutBuffer:
         self.advantages = advantages
         self.returns = advantages + self.values
 
-    def get_all_data(self) -> dict[str, torch.Tensor]:
+    def get_all_data(self) -> dict[str, Any]:
         """Get all data from the buffer (flattened).
 
         Returns:
@@ -204,12 +222,12 @@ class RolloutBuffer:
 
         # Flatten time and env dimensions for observations
         # (num_steps, num_envs, *obs_shape) -> (total_transitions, *obs_shape)
-        flat_obs = self.observations.reshape(total_transitions, *self.obs_shape)
+        flat_obs = flatten_time_env_observation(self.observations)
 
         # Flatten privileged observations
         if self.privileged_observations is not None:
-            flat_privileged_obs = self.privileged_observations.reshape(
-                total_transitions, self.num_privileged_obs
+            flat_privileged_obs = flatten_time_env_observation(
+                self.privileged_observations
             )
         else:
             flat_privileged_obs = None
@@ -232,7 +250,7 @@ class RolloutBuffer:
     def get_minibatch(
         self,
         batch_size: int,
-    ) -> tuple[torch.Tensor, ...]:
+    ) -> tuple[Any, ...]:
         """Get a random minibatch from the buffer.
 
         Args:
@@ -255,9 +273,9 @@ class RolloutBuffer:
         # Random indices
         indices = torch.randint(0, total_transitions, (batch_size,), device=self.device)
 
-        obs = data["observations"][indices]
+        obs = observation_index(data["observations"], indices)
         privileged_obs = (
-            data["privileged_observations"][indices]
+            observation_index(data["privileged_observations"], indices)
             if data["privileged_observations"] is not None
             else None
         )
@@ -287,9 +305,12 @@ class RolloutBuffer:
             Self for chaining.
         """
         self.device = device
-        self.observations = self.observations.to(device)
+        self.observations = observation_to_device(self.observations, device)
         if self.privileged_observations is not None:
-            self.privileged_observations = self.privileged_observations.to(device)
+            self.privileged_observations = observation_to_device(
+                self.privileged_observations,
+                device,
+            )
         self.actions = self.actions.to(device)
         self.rewards = self.rewards.to(device)
         self.dones = self.dones.to(device)

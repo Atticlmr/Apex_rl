@@ -36,6 +36,16 @@ from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.vecenv import VecEnv
 from apexrl.models.base import Actor, ContinuousActor, Critic, DiscreteActor
 from apexrl.optimizers import get_optimizer
+from apexrl.utils import (
+    actor_space_from_observation_space,
+    clone_observation,
+    critic_space_from_observation_space,
+    observation_batch_size,
+    observation_index,
+    observation_to_tensor,
+    space_to_spec,
+    split_actor_critic_observations,
+)
 from apexrl.utils.logger import Logger
 
 
@@ -150,24 +160,28 @@ class PPO:
                     "actor_class/critic_class"
                 )
 
-            self.obs_space = obs_space
+            self.full_obs_space = obs_space
+            self.obs_space = actor_space_from_observation_space(obs_space)
             self.action_space = action_space
             actor_cfg = self._build_actor_cfg(actor_cfg)
             critic_cfg = self._build_critic_cfg(critic_cfg)
 
             # Create actor
             self.actor = actor_class(
-                obs_space=obs_space,
+                obs_space=self.obs_space,
                 action_space=action_space,
                 cfg=actor_cfg,
             ).to(self.device)
 
             # Create critic (may use privileged obs if asymmetric)
             critic_obs_space = (
-                getattr(env, "privileged_obs_space", None) or obs_space
+                critic_space_from_observation_space(obs_space)
+                or getattr(env, "privileged_obs_space", None)
+                or self.obs_space
                 if self.cfg.use_asymmetric
-                else obs_space
+                else self.obs_space
             )
+            self.critic_obs_space = critic_obs_space
             self.critic = critic_class(
                 obs_space=critic_obs_space,
                 cfg=critic_cfg,
@@ -177,6 +191,10 @@ class PPO:
                 "Must provide either (actor, critic) OR "
                 "(actor_class, critic_class, obs_space, action_space)"
             )
+        if not hasattr(self, "full_obs_space"):
+            self.full_obs_space = self.obs_space
+        if not hasattr(self, "critic_obs_space"):
+            self.critic_obs_space = getattr(self.critic, "obs_space", self.obs_space)
 
         # Verify actor type
         if not isinstance(self.actor, (ContinuousActor, DiscreteActor)):
@@ -226,7 +244,7 @@ class PPO:
 
         # Initialize rollout buffer
         # Infer obs shape from obs_space
-        self.obs_shape = self._get_obs_shape(obs_space)
+        self.obs_shape = self._get_obs_shape(self.obs_space)
 
         self.rollout_buffer = RolloutBuffer(
             num_envs=self.num_envs,
@@ -238,6 +256,11 @@ class PPO:
             num_privileged_obs=getattr(env, "num_privileged_obs", 0)
             if self.cfg.use_asymmetric
             else 0,
+            privileged_obs_shape=(
+                space_to_spec(self.critic_obs_space)
+                if self.cfg.use_asymmetric and self.critic_obs_space is not None
+                else None
+            ),
         )
 
         # Logging
@@ -261,23 +284,23 @@ class PPO:
         self.loss_history: dict[str, deque] | None = None
         self.loss_history_maxlen: int = 1000
 
-    def _get_obs_shape(self, obs_space: spaces.Space | None) -> tuple[int, ...]:
+    def _get_obs_shape(self, obs_space: spaces.Space | None) -> Any:
         """Get observation shape from space."""
         if obs_space is None:
             obs_buf = getattr(self.env, "obs_buf", None)
             if obs_buf is not None:
-                return tuple(obs_buf.shape[1:])
+                return getattr(obs_buf, "shape", None) or (self.env.num_obs,)
             # Try to infer from env
             if hasattr(self.env, "num_obs"):
                 return (self.env.num_obs,)
             return (1,)  # Fallback
 
-        if isinstance(obs_space, spaces.Box):
-            return obs_space.shape
-        else:
-            raise NotImplementedError(
-                f"Observation space {type(obs_space)} not supported"
-            )
+        return space_to_spec(obs_space)
+
+    def _split_observations(self, obs: Any) -> tuple[Any, Any | None]:
+        """Split normalized observations into actor and critic branches."""
+        actor_obs, critic_obs = split_actor_critic_observations(obs)
+        return actor_obs, critic_obs
 
     def _build_actor_cfg(self, actor_cfg: dict[str, Any] | None) -> dict[str, Any]:
         """Merge PPO config defaults into actor configuration."""
@@ -332,6 +355,7 @@ class PPO:
 
         # Get initial observations
         obs = self._to_tensor_observation(self.env.get_observations())
+        obs, privileged_obs = self._split_observations(obs)
 
         episode_rewards = torch.zeros(self.num_envs, device=self.device)
         episode_lengths = torch.zeros(self.num_envs, device=self.device)
@@ -339,27 +363,17 @@ class PPO:
         total_reward = 0.0
 
         for step in range(self.cfg.num_steps):
-            # Get privileged obs if using asymmetric critic
-            if self.cfg.use_asymmetric:
-                privileged_obs = self.env.get_privileged_observations()
-                privileged_obs = (
-                    privileged_obs.to(self.device)
-                    if privileged_obs is not None
-                    else None
-                )
-            else:
-                privileged_obs = None
-
             # Sample actions
             with torch.no_grad():
                 actions, log_probs = self.actor.act(obs, deterministic=False)
                 values = self.critic.get_value(
-                    privileged_obs if privileged_obs is not None else obs
+                    privileged_obs if self.cfg.use_asymmetric and privileged_obs is not None else obs
                 )
 
             # Step environment
             next_obs, rewards, dones, extras = self.env.step(actions)
             next_obs = self._to_tensor_observation(next_obs)
+            next_obs, next_privileged_obs = self._split_observations(next_obs)
             rewards = rewards.to(self.device)
             dones = dones.to(self.device).bool()
 
@@ -381,8 +395,16 @@ class PPO:
                 final_obs = extras.get("final_observation")
                 if final_obs is not None:
                     final_obs = self._to_tensor_observation(final_obs)
+                    final_obs, final_privileged_obs = self._split_observations(final_obs)
+                    critic_final_obs = (
+                        final_privileged_obs
+                        if self.cfg.use_asymmetric and final_privileged_obs is not None
+                        else final_obs
+                    )
                     with torch.no_grad():
-                        final_values = self.critic.get_value(final_obs[truncated])
+                        final_values = self.critic.get_value(
+                            observation_index(critic_final_obs, truncated)
+                        )
                     rewards = rewards.clone()
                     rewards[truncated] += self.cfg.gamma * final_values
 
@@ -406,7 +428,9 @@ class PPO:
             # Store transition
             self.rollout_buffer.add(
                 observations=obs,
-                privileged_observations=privileged_obs,
+                privileged_observations=(
+                    privileged_obs if self.cfg.use_asymmetric else None
+                ),
                 actions=actions,
                 rewards=rewards,
                 dones=episode_ends.float(),
@@ -415,19 +439,12 @@ class PPO:
             )
 
             obs = next_obs
+            privileged_obs = next_privileged_obs
 
         # Compute returns and advantages
         with torch.no_grad():
-            # Get privileged observations (avoid duplicate calls)
-            if self.cfg.use_asymmetric:
-                last_privileged_obs = self.env.get_privileged_observations()
-                if last_privileged_obs is not None:
-                    last_privileged_obs = last_privileged_obs.to(self.device)
-            else:
-                last_privileged_obs = None
-
             last_values = self.critic.get_value(
-                last_privileged_obs if last_privileged_obs is not None else obs
+                privileged_obs if self.cfg.use_asymmetric and privileged_obs is not None else obs
             )
 
         self.rollout_buffer.compute_returns_and_advantages(
@@ -457,15 +474,9 @@ class PPO:
 
         return stats
 
-    def _to_tensor_observation(self, obs: Any) -> torch.Tensor:
+    def _to_tensor_observation(self, obs: Any) -> Any:
         """Normalize environment observations to tensors on the training device."""
-        if hasattr(obs, "get"):
-            obs = obs["obs"]
-        elif isinstance(obs, tuple):
-            obs = obs[0]
-        if not isinstance(obs, torch.Tensor):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        return obs.to(self.device)
+        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
 
     def _to_bool_tensor(
         self,
@@ -499,7 +510,7 @@ class PPO:
         returns = data["returns"]
         old_values = data["values"]
 
-        batch_size = observations.shape[0]
+        batch_size = observation_batch_size(observations)
         minibatch_size = self.cfg.get_minibatch_size(self.num_envs)
 
         # Training metrics
@@ -522,9 +533,9 @@ class PPO:
 
                 mb_indices = indices[start:end]
 
-                mb_obs = observations[mb_indices]
+                mb_obs = observation_index(observations, mb_indices)
                 mb_privileged_obs = (
-                    privileged_observations[mb_indices]
+                    observation_index(privileged_observations, mb_indices)
                     if privileged_observations is not None
                     else None
                 )
@@ -833,6 +844,7 @@ class PPO:
         self.critic.eval()
 
         obs = self._to_tensor_observation(self.env.reset())
+        obs, _ = self._split_observations(obs)
 
         episode_rewards = []
         current_rewards = torch.zeros(self.num_envs, device=self.device)
@@ -844,6 +856,7 @@ class PPO:
 
             next_obs, rewards, dones, _ = self.env.step(actions)
             next_obs = self._to_tensor_observation(next_obs)
+            next_obs, _ = self._split_observations(next_obs)
             rewards = rewards.to(self.device)
             dones = dones.to(self.device)
 

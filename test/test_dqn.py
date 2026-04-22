@@ -21,6 +21,7 @@ from apexrl.algorithms.dqn import DQN, DQNConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.envs.gym_wrapper import GymVecEnv
 from apexrl.models import MLPQNetwork
+from helpers import make_multimodal_discrete_env
 
 
 def test_replay_buffer_supports_discrete_actions():
@@ -44,6 +45,35 @@ def test_replay_buffer_supports_discrete_actions():
     assert batch["actions"].shape == (4,)
     assert batch["actions"].dtype == torch.long
     assert batch["observations"].shape == (4, 4)
+
+
+def test_replay_buffer_supports_structured_observations():
+    """Replay buffer should round-trip nested TensorDict observations."""
+    buffer = ReplayBuffer(
+        capacity=8,
+        obs_shape={"image": (1, 4, 4), "vector": (3,)},
+        action_shape=(),
+        device="cpu",
+    )
+
+    buffer.add(
+        observations={
+            "image": torch.randn(4, 1, 4, 4),
+            "vector": torch.randn(4, 3),
+        },
+        actions=torch.tensor([0, 1, 0, 1]),
+        rewards=torch.randn(4),
+        next_observations={
+            "image": torch.randn(4, 1, 4, 4),
+            "vector": torch.randn(4, 3),
+        },
+        dones=torch.tensor([0.0, 1.0, 0.0, 1.0]),
+    )
+
+    batch = buffer.sample(4)
+    assert set(batch["observations"].keys()) == {"image", "vector"}
+    assert batch["observations"]["image"].shape == (4, 1, 4, 4)
+    assert batch["observations"]["vector"].shape == (4, 3)
 
 
 def test_dqn_update_smoke():
@@ -157,5 +187,34 @@ def test_off_policy_runner_smoke_cartpole_dueling():
     result = runner.learn(total_timesteps=64)
     assert result["total_timesteps"] >= 64
     assert runner.agent.q_network.dueling is True
+    assert runner.agent.num_updates > 0
+    runner.close()
+
+
+def test_dqn_supports_multimodal_tensordict_obs():
+    """DQN should train with nested actor observations carried in TensorDicts."""
+    env = GymVecEnv(
+        [make_multimodal_discrete_env for _ in range(2)],
+        device="cpu",
+    )
+    cfg = DQNConfig(
+        batch_size=8,
+        buffer_size=128,
+        learning_starts=8,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=0,
+        save_interval=0,
+    )
+    runner = OffPolicyRunner(
+        env=env,
+        cfg=cfg,
+        q_network_class=MLPQNetwork,
+        device=torch.device("cpu"),
+    )
+
+    result = runner.learn(total_timesteps=32)
+    assert result["total_timesteps"] >= 32
     assert runner.agent.num_updates > 0
     runner.close()

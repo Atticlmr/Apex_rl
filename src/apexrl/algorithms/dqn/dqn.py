@@ -25,6 +25,12 @@ from gymnasium import spaces
 from apexrl.algorithms.dqn.config import DQNConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.optimizers import get_optimizer
+from apexrl.utils import (
+    actor_space_from_observation_space,
+    observation_to_tensor,
+    space_to_spec,
+    split_actor_critic_observations,
+)
 
 
 class DQN:
@@ -50,9 +56,9 @@ class DQN:
         )
         self.logger = None
 
-        self.obs_space = obs_space or getattr(env, "observation_space_gym", None)
+        full_obs_space = obs_space or getattr(env, "observation_space_gym", None)
         self.action_space = action_space or getattr(env, "action_space_gym", None)
-        if self.obs_space is None or self.action_space is None:
+        if full_obs_space is None or self.action_space is None:
             raise ValueError("DQN requires obs_space and action_space")
         if not isinstance(self.action_space, spaces.Discrete):
             raise ValueError(
@@ -62,6 +68,8 @@ class DQN:
         if q_network_class is None:
             raise ValueError("q_network_class is required for DQN")
 
+        self.full_obs_space = full_obs_space
+        self.obs_space = actor_space_from_observation_space(full_obs_space)
         self.num_envs = env.num_envs
         self.num_actions = self.action_space.n
 
@@ -82,7 +90,7 @@ class DQN:
 
         self.replay_buffer = ReplayBuffer(
             capacity=self.cfg.buffer_size,
-            obs_shape=tuple(self.obs_space.shape),
+            obs_shape=space_to_spec(self.obs_space),
             action_shape=(),
             device=self.device,
             obs_dtype=torch.float32,
@@ -107,22 +115,14 @@ class DQN:
             cfg.update(q_network_cfg)
         return cfg
 
-    def _to_tensor_observation(self, obs: Any) -> torch.Tensor:
-        """Convert observations to a float tensor on the agent device."""
-        if isinstance(obs, dict):
-            if "obs" in obs:
-                obs = obs["obs"]
-            elif len(obs) == 1:
-                obs = next(iter(obs.values()))
-            else:
-                raise ValueError(
-                    "DQN requires a single tensor observation or a dict with key 'obs'"
-                )
-        if not isinstance(obs, torch.Tensor):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        else:
-            obs = obs.to(self.device, dtype=torch.float32)
-        return obs
+    def _to_tensor_observation(self, obs: Any) -> Any:
+        """Convert observations to tensors or TensorDicts on the agent device."""
+        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
+
+    def _actor_observation(self, obs: Any) -> Any:
+        """Extract the actor-visible observation branch."""
+        actor_obs, _ = split_actor_critic_observations(obs)
+        return actor_obs
 
     def get_epsilon(self, total_timesteps: int) -> float:
         """Return the epsilon value for the given training step."""
@@ -136,12 +136,12 @@ class DQN:
 
     def act(
         self,
-        obs: torch.Tensor,
+        obs: Any,
         deterministic: bool = False,
         epsilon: float | None = None,
     ) -> torch.Tensor:
         """Select epsilon-greedy actions."""
-        obs = self._to_tensor_observation(obs)
+        obs = self._actor_observation(self._to_tensor_observation(obs))
         epsilon = 0.0 if deterministic else (epsilon if epsilon is not None else 0.0)
         with torch.no_grad():
             return self.q_network.act(obs, epsilon=epsilon)
@@ -157,18 +157,22 @@ class DQN:
 
     def store_transition(
         self,
-        observations: torch.Tensor,
+        observations: Any,
         actions: torch.Tensor,
         rewards: torch.Tensor,
-        next_observations: torch.Tensor,
+        next_observations: Any,
         dones: torch.Tensor,
     ) -> None:
         """Store a batch of transitions in replay."""
         self.replay_buffer.add(
-            observations=self._to_tensor_observation(observations),
+            observations=self._actor_observation(
+                self._to_tensor_observation(observations)
+            ),
             actions=actions.to(self.device, dtype=torch.long),
             rewards=rewards.to(self.device, dtype=torch.float32),
-            next_observations=self._to_tensor_observation(next_observations),
+            next_observations=self._actor_observation(
+                self._to_tensor_observation(next_observations)
+            ),
             dones=dones.to(self.device, dtype=torch.float32),
         )
 

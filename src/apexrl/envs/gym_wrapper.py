@@ -26,6 +26,17 @@ import numpy as np
 import torch
 
 from apexrl.envs.vecenv import VecEnv
+from apexrl.utils import (
+    actor_space_from_observation_space,
+    allocate_observation_storage,
+    observation_set_index,
+    observation_to_tensor,
+    space_to_spec,
+    spec_numel,
+    split_actor_critic_observations,
+    stack_observations,
+    zeros_like_observation,
+)
 
 
 class GymVecEnv(VecEnv):
@@ -67,16 +78,25 @@ class GymVecEnv(VecEnv):
         self._act_space = self._env.action_space
         self.observation_space_gym = self._obs_space
         self.action_space_gym = self._act_space
+        self.privileged_obs_space = None
 
         # Infer dimensions BEFORE calling super().__init__
-        if hasattr(self._obs_space, "shape"):
-            self.obs_shape = (
-                tuple(self._obs_space.shape) if len(self._obs_space.shape) > 0 else (1,)
-            )
-            self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
+        actor_obs_space = actor_space_from_observation_space(self._obs_space)
+        actor_obs_spec = space_to_spec(actor_obs_space)
+        self.obs_shape = actor_obs_spec if isinstance(actor_obs_spec, tuple) else ()
+        self.num_obs = spec_numel(actor_obs_spec)
+        privileged_obs_space = split_actor_critic_observations(
+            space_to_spec(self._obs_space)
+        )[1]
+        if privileged_obs_space is not None:
+            self.num_privileged_obs = spec_numel(privileged_obs_space)
+            if isinstance(self._obs_space, gym.spaces.Dict):
+                self.privileged_obs_space = (
+                    self._obs_space.spaces.get("privileged_obs")
+                    or self._obs_space.spaces.get("critic_obs")
+                )
         else:
-            self.obs_shape = (1,)
-            self.num_obs = 1
+            self.num_privileged_obs = 0
 
         if isinstance(self._act_space, gym.spaces.Discrete):
             self.num_actions = 1
@@ -97,7 +117,11 @@ class GymVecEnv(VecEnv):
         self.device = torch.device(device)
 
         # Initialize buffers
-        self.obs_buf = torch.zeros((self.num_envs, *self.obs_shape), device=self.device)
+        self.obs_buf = allocate_observation_storage(
+            (self.num_envs,),
+            space_to_spec(self._obs_space),
+            device=self.device,
+        )
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -113,18 +137,15 @@ class GymVecEnv(VecEnv):
         # Initial reset of all environments
         self.reset()
 
-    def get_observations(self) -> torch.Tensor:
+    def get_observations(self) -> Any:
         """Return current observations."""
         return self.obs_buf
 
-    def _obs_to_tensor(self, obs: np.ndarray) -> torch.Tensor:
+    def _obs_to_tensor(self, obs: np.ndarray | dict[str, Any]) -> Any:
         """Convert numpy observation to tensor."""
-        if isinstance(obs, tuple):
-            obs = obs[0]
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        return obs_tensor.reshape(self.obs_shape)
+        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
 
-    def reset(self) -> torch.Tensor:
+    def reset(self) -> Any:
         """Reset all environments."""
         obs_list = []
         for i, env in enumerate(self.envs):
@@ -133,7 +154,7 @@ class GymVecEnv(VecEnv):
             self._ep_rewards[i] = 0.0
             self.episode_length_buf[i] = 0
 
-        self.obs_buf = torch.stack(obs_list)
+        self.obs_buf = stack_observations(obs_list)
         self.rew_buf.zero_()
         self.reset_buf.zero_()
         self._completed_episodes.clear()
@@ -145,13 +166,13 @@ class GymVecEnv(VecEnv):
         env_ids = env_ids.cpu().numpy()
         for idx in env_ids:
             obs, _ = self.envs[idx].reset(seed=None)
-            self.obs_buf[idx] = self._obs_to_tensor(obs)
+            observation_set_index(self.obs_buf, idx, self._obs_to_tensor(obs))
             self._ep_rewards[idx] = 0.0
             self.episode_length_buf[idx] = 0
 
     def step(
         self, actions: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[Any, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step all environments.
 
         Args:
@@ -167,7 +188,7 @@ class GymVecEnv(VecEnv):
             self.num_envs, dtype=torch.bool, device=self.device
         )
         truncated_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        final_obs_buf = torch.zeros_like(self.obs_buf)
+        final_obs_buf = zeros_like_observation(self.obs_buf)
 
         for i, env in enumerate(self.envs):
             # Handle discrete vs continuous actions
@@ -180,7 +201,7 @@ class GymVecEnv(VecEnv):
             done = terminated or truncated
             obs_tensor = self._obs_to_tensor(obs)
 
-            self.obs_buf[i] = obs_tensor
+            observation_set_index(self.obs_buf, i, obs_tensor)
             self.rew_buf[i] = float(reward)
             self.reset_buf[i] = done
             self.episode_length_buf[i] += 1
@@ -190,14 +211,14 @@ class GymVecEnv(VecEnv):
 
             # Track completed episodes
             if done:
-                final_obs_buf[i] = obs_tensor
+                observation_set_index(final_obs_buf, i, obs_tensor)
                 self._completed_episodes.append(self._ep_rewards[i])
                 self._ep_rewards[i] = 0.0
 
             # Auto-reset if done
             if done:
                 obs, _ = env.reset(seed=None)
-                self.obs_buf[i] = self._obs_to_tensor(obs)
+                observation_set_index(self.obs_buf, i, self._obs_to_tensor(obs))
                 self.episode_length_buf[i] = 0
 
         extras = {
@@ -209,6 +230,11 @@ class GymVecEnv(VecEnv):
         }
 
         return self.obs_buf, self.rew_buf, self.reset_buf, extras
+
+    def get_privileged_observations(self) -> Any | None:
+        """Return critic-only observations when the env exposes grouped observations."""
+        _, privileged_obs = split_actor_critic_observations(self.obs_buf)
+        return privileged_obs
 
     def close(self) -> None:
         """Close all environments."""
@@ -246,6 +272,7 @@ class GymVecEnvContinuous(VecEnv):
         self._act_space = self._env.action_space
         self.observation_space_gym = self._obs_space
         self.action_space_gym = self._act_space
+        self.privileged_obs_space = None
 
         # Verify continuous action space
         assert isinstance(self._act_space, gym.spaces.Box), (
@@ -254,14 +281,22 @@ class GymVecEnvContinuous(VecEnv):
         )
 
         # Infer dimensions BEFORE calling super().__init__
-        if hasattr(self._obs_space, "shape"):
-            self.obs_shape = (
-                tuple(self._obs_space.shape) if len(self._obs_space.shape) > 0 else (1,)
-            )
-            self.num_obs = int(torch.prod(torch.tensor(self._obs_space.shape)))
+        actor_obs_space = actor_space_from_observation_space(self._obs_space)
+        actor_obs_spec = space_to_spec(actor_obs_space)
+        self.obs_shape = actor_obs_spec if isinstance(actor_obs_spec, tuple) else ()
+        self.num_obs = spec_numel(actor_obs_spec)
+        privileged_obs_space = split_actor_critic_observations(
+            space_to_spec(self._obs_space)
+        )[1]
+        if privileged_obs_space is not None:
+            self.num_privileged_obs = spec_numel(privileged_obs_space)
+            if isinstance(self._obs_space, gym.spaces.Dict):
+                self.privileged_obs_space = (
+                    self._obs_space.spaces.get("privileged_obs")
+                    or self._obs_space.spaces.get("critic_obs")
+                )
         else:
-            self.obs_shape = (1,)
-            self.num_obs = 1
+            self.num_privileged_obs = 0
 
         self.num_actions = (
             self._act_space.shape[0] if len(self._act_space.shape) > 0 else 1
@@ -286,7 +321,11 @@ class GymVecEnvContinuous(VecEnv):
         )
 
         # Initialize buffers
-        self.obs_buf = torch.zeros((self.num_envs, *self.obs_shape), device=self.device)
+        self.obs_buf = allocate_observation_storage(
+            (self.num_envs,),
+            space_to_spec(self._obs_space),
+            device=self.device,
+        )
         self.rew_buf = torch.zeros(self.num_envs, device=self.device)
         self.reset_buf = torch.zeros(
             self.num_envs, dtype=torch.bool, device=self.device
@@ -308,18 +347,15 @@ class GymVecEnvContinuous(VecEnv):
             return torch.clamp(actions, self.action_low, self.action_high)
         return actions
 
-    def get_observations(self) -> torch.Tensor:
+    def get_observations(self) -> Any:
         """Return current observations."""
         return self.obs_buf
 
-    def _obs_to_tensor(self, obs: np.ndarray) -> torch.Tensor:
+    def _obs_to_tensor(self, obs: np.ndarray | dict[str, Any]) -> Any:
         """Convert numpy observation to tensor."""
-        if isinstance(obs, tuple):
-            obs = obs[0]
-        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        return obs_tensor.reshape(self.obs_shape)
+        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
 
-    def reset(self) -> torch.Tensor:
+    def reset(self) -> Any:
         """Reset all environments."""
         obs_list = []
         for i, env in enumerate(self.envs):
@@ -328,7 +364,7 @@ class GymVecEnvContinuous(VecEnv):
             self._ep_rewards[i] = 0.0
             self.episode_length_buf[i] = 0
 
-        self.obs_buf = torch.stack(obs_list)
+        self.obs_buf = stack_observations(obs_list)
         self.rew_buf.zero_()
         self.reset_buf.zero_()
         self._completed_episodes.clear()
@@ -340,13 +376,13 @@ class GymVecEnvContinuous(VecEnv):
         env_ids = env_ids.cpu().numpy()
         for idx in env_ids:
             obs, _ = self.envs[idx].reset(seed=None)
-            self.obs_buf[idx] = self._obs_to_tensor(obs)
+            observation_set_index(self.obs_buf, idx, self._obs_to_tensor(obs))
             self._ep_rewards[idx] = 0.0
             self.episode_length_buf[idx] = 0
 
     def step(
         self, actions: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]:
+    ) -> tuple[Any, torch.Tensor, torch.Tensor, dict[str, Any]]:
         """Step all environments.
 
         Args:
@@ -362,14 +398,14 @@ class GymVecEnvContinuous(VecEnv):
             self.num_envs, dtype=torch.bool, device=self.device
         )
         truncated_buf = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        final_obs_buf = torch.zeros_like(self.obs_buf)
+        final_obs_buf = zeros_like_observation(self.obs_buf)
 
         for i, env in enumerate(self.envs):
             obs, reward, terminated, truncated, info = env.step(actions_np[i])
             done = terminated or truncated
             obs_tensor = self._obs_to_tensor(obs)
 
-            self.obs_buf[i] = obs_tensor
+            observation_set_index(self.obs_buf, i, obs_tensor)
             self.rew_buf[i] = float(reward)
             self.reset_buf[i] = done
             self.episode_length_buf[i] += 1
@@ -379,14 +415,14 @@ class GymVecEnvContinuous(VecEnv):
 
             # Track completed episodes
             if done:
-                final_obs_buf[i] = obs_tensor
+                observation_set_index(final_obs_buf, i, obs_tensor)
                 self._completed_episodes.append(self._ep_rewards[i])
                 self._ep_rewards[i] = 0.0
 
             # Auto-reset if done
             if done:
                 obs, _ = env.reset(seed=None)
-                self.obs_buf[i] = self._obs_to_tensor(obs)
+                observation_set_index(self.obs_buf, i, self._obs_to_tensor(obs))
                 self.episode_length_buf[i] = 0
 
         extras = {
@@ -398,6 +434,11 @@ class GymVecEnvContinuous(VecEnv):
         }
 
         return self.obs_buf, self.rew_buf, self.reset_buf, extras
+
+    def get_privileged_observations(self) -> Any | None:
+        """Return critic-only observations when the env exposes grouped observations."""
+        _, privileged_obs = split_actor_critic_observations(self.obs_buf)
+        return privileged_obs
 
     def close(self) -> None:
         """Close all environments."""

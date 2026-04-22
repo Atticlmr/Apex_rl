@@ -19,6 +19,7 @@ import torch
 from apexrl.agent.off_policy_runner import OffPolicyRunner
 from apexrl.algorithms.sac import SAC, SACConfig
 from apexrl.envs.gym_wrapper import GymVecEnvContinuous
+from helpers import make_multimodal_continuous_env
 
 
 def test_sac_actor_respects_action_bounds():
@@ -140,3 +141,28 @@ def test_off_policy_runner_can_create_sac_agent():
     assert result["total_timesteps"] >= 64
     assert runner.agent.num_updates > 0
     runner.close()
+
+
+def test_sac_supports_multimodal_and_privileged_obs():
+    """SAC should train with nested actor obs and privileged critic obs."""
+    env = GymVecEnvContinuous(
+        [make_multimodal_continuous_env for _ in range(2)],
+        device="cpu",
+    )
+    cfg = SACConfig(
+        batch_size=8,
+        buffer_size=128,
+        learning_starts=8,
+        train_freq=1,
+        gradient_steps=1,
+        target_update_interval=1,
+        log_interval=0,
+        save_interval=0,
+        device="cpu",
+    )
+    agent = SAC(env=env, cfg=cfg, device=torch.device("cpu"))
+
+    result = agent.learn(total_timesteps=32)
+    assert result["total_timesteps"] >= 32
+    assert agent.num_updates > 0
+    env.close()

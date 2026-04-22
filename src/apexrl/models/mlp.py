@@ -33,6 +33,7 @@ from apexrl.models.base import (
     DiscreteActor,
     DiscreteQNetwork,
 )
+from apexrl.utils import flatten_observation, space_to_spec, spec_numel
 
 
 def _orthogonal_init(module: nn.Module, gain: float) -> None:
@@ -70,6 +71,11 @@ def _init_sac_policy_network(
     encoder.apply(lambda m: _orthogonal_init(m, math.sqrt(2.0)))
     _orthogonal_init(mean_head, 0.01)
     _orthogonal_init(log_std_head, 0.01)
+
+
+def _obs_space_numel(obs_space: spaces.Space) -> int:
+    """Return the flattened feature size of a possibly structured observation space."""
+    return spec_numel(space_to_spec(obs_space))
 
 
 def build_mlp(
@@ -165,14 +171,7 @@ class MLPActor(ContinuousActor):
         learn_std = cfg.get("learn_std", True) if cfg else True
         init_std = cfg.get("init_std", 1.0) if cfg else 1.0
 
-        # Build network
-        # Support different observation types
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                f"MLPActor only supports Box obs space, got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         self.mlp = build_mlp(
             input_dim=obs_dim,
@@ -193,7 +192,7 @@ class MLPActor(ContinuousActor):
 
         _init_policy_network(self, self.mlp[-1])
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass to get action mean.
 
         Args:
@@ -202,12 +201,11 @@ class MLPActor(ContinuousActor):
         Returns:
             Action mean. Shape: (batch_size, action_dim)
         """
-        # Flatten if needed
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        return self.mlp(obs)
+        return self.mlp(flatten_observation(obs))
 
-    def get_action_dist(self, obs: torch.Tensor) -> torch.distributions.Normal:
+    def get_action_dist(
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
+    ) -> torch.distributions.Normal:
         """Get Gaussian action distribution.
 
         Args:
@@ -267,13 +265,7 @@ class MLPCritic(Critic):
         activation = cfg.get("activation", "elu") if cfg else "elu"
         layer_norm = cfg.get("layer_norm", False) if cfg else False
 
-        # Build network
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                f"MLPCritic only supports Box obs space, got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         self.mlp = build_mlp(
             input_dim=obs_dim,
@@ -285,7 +277,7 @@ class MLPCritic(Critic):
 
         _init_value_network(self, self.mlp[-1])
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass to get value estimates.
 
         Args:
@@ -294,12 +286,9 @@ class MLPCritic(Critic):
         Returns:
             Value estimates. Shape: (batch_size,)
         """
-        # Flatten if needed
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        return self.mlp(obs).squeeze(-1)
+        return self.mlp(flatten_observation(obs)).squeeze(-1)
 
-    def get_value(self, obs: torch.Tensor) -> torch.Tensor:
+    def get_value(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Get value estimates.
 
         Args:
@@ -556,13 +545,7 @@ class MLPDiscreteActor(DiscreteActor):
         activation = cfg.get("activation", "elu") if cfg else "elu"
         layer_norm = cfg.get("layer_norm", False) if cfg else False
 
-        # Build network
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                f"MLPDiscreteActor only supports Box obs space, got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         self.mlp = build_mlp(
             input_dim=obs_dim,
@@ -574,7 +557,7 @@ class MLPDiscreteActor(DiscreteActor):
 
         _init_policy_network(self, self.mlp[-1])
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Forward pass to get action logits.
 
         Args:
@@ -583,12 +566,11 @@ class MLPDiscreteActor(DiscreteActor):
         Returns:
             Action logits. Shape: (batch_size, num_actions)
         """
-        # Flatten if needed
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        return self.mlp(obs)
+        return self.mlp(flatten_observation(obs))
 
-    def get_action_dist(self, obs: torch.Tensor) -> torch.distributions.Categorical:
+    def get_action_dist(
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
+    ) -> torch.distributions.Categorical:
         """Get Categorical action distribution.
 
         Args:
@@ -618,12 +600,7 @@ class MLPQNetwork(DiscreteQNetwork):
         layer_norm = cfg.get("layer_norm", False) if cfg else False
         self.dueling = cfg.get("dueling", False) if cfg else False
 
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                f"MLPQNetwork only supports Box obs space, got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         self.encoder = build_mlp(
             input_dim=obs_dim,
@@ -643,13 +620,13 @@ class MLPQNetwork(DiscreteQNetwork):
             self.q_head = nn.Linear(self.feature_dim, self.num_actions)
             _init_q_network(self, self.q_head)
 
-    def _forward_features(self, obs: torch.Tensor) -> torch.Tensor:
+    def _forward_features(
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
+    ) -> torch.Tensor:
         """Encode flattened observations into latent features."""
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        return self.encoder(obs)
+        return self.encoder(flatten_observation(obs))
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Return Q-values for each discrete action."""
         features = self._forward_features(obs)
         if not self.dueling:
@@ -684,13 +661,7 @@ class MLPSquashedGaussianActor(ContinuousActor):
         activation = cfg.get("activation", "relu")
         layer_norm = cfg.get("layer_norm", False)
 
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                "MLPSquashedGaussianActor only supports Box obs space, "
-                f"got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         feature_dim = hidden_dims[-1] if hidden_dims else obs_dim
         encoder_hidden_dims = hidden_dims[:-1] if hidden_dims else []
@@ -710,14 +681,12 @@ class MLPSquashedGaussianActor(ContinuousActor):
         self.register_buffer("action_scale", (action_high - action_low) / 2.0)
         self.register_buffer("action_bias", (action_high + action_low) / 2.0)
 
-    def _flatten_obs(self, obs: torch.Tensor) -> torch.Tensor:
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
-        return obs
+    def _flatten_obs(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
+        return flatten_observation(obs)
 
     def _distribution_params(
         self,
-        obs: torch.Tensor,
+        obs: torch.Tensor | dict[str, torch.Tensor],
     ) -> tuple[torch.Tensor, torch.Tensor]:
         obs = self._flatten_obs(obs)
         features = self.encoder(obs)
@@ -728,12 +697,14 @@ class MLPSquashedGaussianActor(ContinuousActor):
         log_std = torch.clamp(log_std, min_log_std, max_log_std)
         return mean, log_std
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
         """Return the mean action in the unconstrained Gaussian space."""
         mean, _ = self._distribution_params(obs)
         return mean
 
-    def get_action_dist(self, obs: torch.Tensor) -> torch.distributions.Normal:
+    def get_action_dist(
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
+    ) -> torch.distributions.Normal:
         """Return the Gaussian distribution before tanh squashing."""
         mean, log_std = self._distribution_params(obs)
         return torch.distributions.Normal(mean, torch.exp(log_std))
@@ -763,8 +734,6 @@ class MLPSquashedGaussianActor(ContinuousActor):
         deterministic: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Sample actions and map them to the environment bounds."""
-        if isinstance(obs, dict):
-            obs = obs["obs"]
         dist = self.get_action_dist(obs)
 
         if deterministic:
@@ -784,8 +753,6 @@ class MLPSquashedGaussianActor(ContinuousActor):
         actions: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Evaluate environment-scaled actions under the current policy."""
-        if isinstance(obs, dict):
-            obs = obs["obs"]
         dist = self.get_action_dist(obs)
         squashed_actions = (actions - self.action_bias) / (self.action_scale + 1e-6)
         squashed_actions = torch.clamp(squashed_actions, -0.999, 0.999)
@@ -811,13 +778,7 @@ class MLPContinuousQNetwork(ContinuousQNetwork):
         activation = cfg.get("activation", "relu")
         layer_norm = cfg.get("layer_norm", False)
 
-        if isinstance(obs_space, spaces.Box):
-            obs_dim = int(torch.prod(torch.tensor(obs_space.shape)))
-        else:
-            raise NotImplementedError(
-                "MLPContinuousQNetwork only supports Box obs space, "
-                f"got {type(obs_space)}"
-            )
+        obs_dim = _obs_space_numel(obs_space)
 
         self.q_net = build_mlp(
             input_dim=obs_dim + self.action_dim,
@@ -828,10 +789,13 @@ class MLPContinuousQNetwork(ContinuousQNetwork):
         )
         _init_q_network(self, self.q_net[-1])
 
-    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
         """Return ``Q(s, a)`` estimates with shape ``(batch_size,)``."""
-        if obs.dim() > 2:
-            obs = obs.reshape(obs.shape[0], -1)
+        obs = flatten_observation(obs)
         if actions.dim() > 2:
             actions = actions.reshape(actions.shape[0], -1)
         return self.q_net(torch.cat([obs, actions], dim=-1)).squeeze(-1)

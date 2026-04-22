@@ -105,8 +105,8 @@ class Actor(nn.Module, ABC):
         self.cfg = cfg or {}
 
         # Store space information
-        self.obs_shape = obs_space.shape
-        self.action_shape = action_space.shape
+        self.obs_shape = getattr(obs_space, "shape", None)
+        self.action_shape = getattr(action_space, "shape", None)
 
     @abstractmethod
     def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
@@ -411,7 +411,7 @@ class DiscreteQNetwork(nn.Module, ABC):
         self.obs_space = obs_space
         self.action_space = action_space
         self.cfg = cfg or {}
-        self.obs_shape = obs_space.shape
+        self.obs_shape = getattr(obs_space, "shape", None)
         self.num_actions = action_space.n
 
     @abstractmethod
@@ -459,9 +459,11 @@ class ContinuousQNetwork(nn.Module, ABC):
         self.obs_space = obs_space
         self.action_space = action_space
         self.cfg = cfg or {}
-        self.obs_shape = obs_space.shape
-        self.action_shape = action_space.shape
-        self.action_dim = action_space.shape[0] if len(action_space.shape) > 0 else 1
+        self.obs_shape = getattr(obs_space, "shape", None)
+        self.action_shape = getattr(action_space, "shape", None)
+        self.action_dim = (
+            action_space.shape[0] if len(action_space.shape) > 0 else 1
+        )
 
     @abstractmethod
     def forward(
@@ -516,7 +518,7 @@ class Critic(nn.Module, ABC):
         nn.Module.__init__(self)
         self.obs_space = obs_space
         self.cfg = cfg or {}
-        self.obs_shape = obs_space.shape
+        self.obs_shape = getattr(obs_space, "shape", None)
 
     @abstractmethod
     def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:

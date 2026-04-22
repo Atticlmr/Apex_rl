@@ -21,6 +21,7 @@ from apexrl.algorithms.ppo import PPO, PPOConfig
 from apexrl.buffer.rollout_buffer import RolloutBuffer
 from apexrl.envs.gym_wrapper import GymVecEnv, GymVecEnvContinuous
 from apexrl.models import MLPActor, MLPCritic, MLPDiscreteActor
+from helpers import make_multimodal_discrete_env
 
 
 def test_rollout_buffer_supports_continuous_actions():
@@ -48,6 +49,43 @@ def test_rollout_buffer_supports_continuous_actions():
     data = buffer.get_all_data()
     assert data["actions"].shape == (8, 2)
     assert data["actions"].dtype == torch.float32
+
+
+def test_rollout_buffer_supports_structured_and_privileged_obs():
+    """Rollout buffer should flatten nested actor and privileged observations."""
+    buffer = RolloutBuffer(
+        num_envs=2,
+        num_steps=2,
+        obs_shape={"image": (1, 4, 4), "vector": (3,)},
+        action_shape=(),
+        action_dtype=torch.long,
+        device=torch.device("cpu"),
+        num_privileged_obs=7,
+        privileged_obs_shape={"state": (5,), "context": (2,)},
+    )
+
+    for _ in range(2):
+        buffer.add(
+            observations={
+                "image": torch.randn(2, 1, 4, 4),
+                "vector": torch.randn(2, 3),
+            },
+            privileged_observations={
+                "state": torch.randn(2, 5),
+                "context": torch.randn(2, 2),
+            },
+            actions=torch.randint(0, 2, (2,)),
+            rewards=torch.randn(2),
+            dones=torch.zeros(2),
+            values=torch.randn(2),
+            log_probs=torch.randn(2),
+        )
+
+    data = buffer.get_all_data()
+    assert data["observations"]["image"].shape == (4, 1, 4, 4)
+    assert data["observations"]["vector"].shape == (4, 3)
+    assert data["privileged_observations"]["state"].shape == (4, 5)
+    assert data["privileged_observations"]["context"].shape == (4, 2)
 
 
 def test_gym_vecenv_reports_truncation_metadata():
@@ -117,4 +155,33 @@ def test_ppo_collect_rollout_smoke_pendulum():
     stats = agent.collect_rollout()
     assert "rollout/mean_reward" in stats
     assert agent.rollout_buffer.get_all_data()["actions"].shape[1] == 1
+    env.close()
+
+
+def test_ppo_supports_multimodal_and_privileged_obs():
+    """PPO should train with nested actor obs and privileged critic obs."""
+    env = GymVecEnv(
+        [make_multimodal_discrete_env for _ in range(2)],
+        device="cpu",
+    )
+    cfg = PPOConfig(
+        num_steps=8,
+        num_epochs=1,
+        minibatch_size=8,
+        learning_rate_schedule="constant",
+        use_asymmetric=True,
+        device="cpu",
+    )
+    agent = PPO(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPDiscreteActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+
+    rollout_stats = agent.collect_rollout()
+    update_stats = agent.update()
+    assert "rollout/mean_reward" in rollout_stats
+    assert "train/policy_loss" in update_stats
     env.close()

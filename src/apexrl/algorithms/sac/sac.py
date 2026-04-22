@@ -36,6 +36,13 @@ from apexrl.algorithms.sac.config import SACConfig
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.models import MLPContinuousQNetwork, MLPSquashedGaussianActor
 from apexrl.optimizers import get_optimizer
+from apexrl.utils import (
+    actor_space_from_observation_space,
+    critic_space_from_observation_space,
+    observation_to_tensor,
+    space_to_spec,
+    split_actor_critic_observations,
+)
 
 
 class SAC:
@@ -81,19 +88,19 @@ class SAC:
         else:
             self.device = device
 
-        self.obs_space = obs_space or getattr(env, "observation_space_gym", None)
+        full_obs_space = obs_space or getattr(env, "observation_space_gym", None)
         self.action_space = action_space or getattr(env, "action_space_gym", None)
-        if self.obs_space is None or self.action_space is None:
+        if full_obs_space is None or self.action_space is None:
             raise ValueError("SAC requires obs_space and action_space")
         if not isinstance(self.action_space, spaces.Box):
             raise ValueError(
                 f"SAC only supports Box action spaces, got {type(self.action_space)}"
             )
-        if not isinstance(self.obs_space, spaces.Box):
-            raise ValueError(
-                "SAC currently only supports Box observation spaces, "
-                f"got {type(self.obs_space)}"
-            )
+        self.full_obs_space = full_obs_space
+        self.obs_space = actor_space_from_observation_space(full_obs_space)
+        self.critic_obs_space = (
+            critic_space_from_observation_space(full_obs_space) or self.obs_space
+        )
 
         self.num_envs = env.num_envs
         self.action_dim = (
@@ -116,12 +123,12 @@ class SAC:
                 actor_cfg,
             ).to(self.device)
             self.critic1 = critic_class(
-                self.obs_space,
+                self.critic_obs_space,
                 self.action_space,
                 critic_cfg,
             ).to(self.device)
             self.critic2 = critic_class(
-                self.obs_space,
+                self.critic_obs_space,
                 self.action_space,
                 critic_cfg,
             ).to(self.device)
@@ -175,11 +182,16 @@ class SAC:
 
         self.replay_buffer = ReplayBuffer(
             capacity=self.cfg.buffer_size,
-            obs_shape=tuple(self.obs_space.shape),
+            obs_shape=space_to_spec(self.obs_space),
             action_shape=self.action_space.shape,
             device=self.device,
             obs_dtype=torch.float32,
             action_dtype=torch.float32,
+            critic_obs_shape=(
+                space_to_spec(self.critic_obs_space)
+                if self.critic_obs_space is not self.obs_space
+                else None
+            ),
         )
 
         self.iteration = 0
@@ -217,27 +229,13 @@ class SAC:
             merged.update(critic_cfg)
         return merged
 
-    def _to_tensor_observation(self, obs: Any) -> torch.Tensor:
-        """Convert environment observations to float tensors on the agent device."""
-        if isinstance(obs, dict):
-            if "obs" in obs:
-                obs = obs["obs"]
-            elif len(obs) == 1:
-                obs = next(iter(obs.values()))
-            else:
-                raise ValueError(
-                    "SAC requires a single tensor observation or a dict with key 'obs'"
-                )
-        if hasattr(obs, "get"):
-            obs = obs["obs"]
-        elif isinstance(obs, tuple):
-            obs = obs[0]
+    def _to_tensor_observation(self, obs: Any) -> Any:
+        """Convert environment observations to tensors on the agent device."""
+        return observation_to_tensor(obs, dtype=torch.float32, device=self.device)
 
-        if not isinstance(obs, torch.Tensor):
-            obs = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
-        else:
-            obs = obs.to(self.device, dtype=torch.float32)
-        return obs
+    def _split_observations(self, obs: Any) -> tuple[Any, Any | None]:
+        """Split full observations into actor and critic branches."""
+        return split_actor_critic_observations(obs)
 
     def get_alpha(self) -> torch.Tensor:
         """Return the current entropy temperature on the training device."""
@@ -274,7 +272,7 @@ class SAC:
 
     def act(
         self,
-        obs: torch.Tensor,
+        obs: Any,
         deterministic: bool = False,
         epsilon: float | None = None,
     ) -> torch.Tensor:
@@ -285,26 +283,34 @@ class SAC:
         """
 
         del epsilon
-        obs = self._to_tensor_observation(obs)
+        obs, _ = self._split_observations(self._to_tensor_observation(obs))
         with torch.no_grad():
             actions, _ = self.actor.act(obs, deterministic=deterministic)
         return actions
 
     def store_transition(
         self,
-        observations: torch.Tensor,
+        observations: Any,
         actions: torch.Tensor,
         rewards: torch.Tensor,
-        next_observations: torch.Tensor,
+        next_observations: Any,
         dones: torch.Tensor,
     ) -> None:
         """Store a batch of transitions in replay."""
+        observations = self._to_tensor_observation(observations)
+        next_observations = self._to_tensor_observation(next_observations)
+        actor_observations, critic_observations = self._split_observations(observations)
+        next_actor_observations, next_critic_observations = self._split_observations(
+            next_observations
+        )
         self.replay_buffer.add(
-            observations=self._to_tensor_observation(observations),
+            observations=actor_observations,
             actions=actions.to(self.device, dtype=torch.float32),
             rewards=rewards.to(self.device, dtype=torch.float32),
-            next_observations=self._to_tensor_observation(next_observations),
+            next_observations=next_actor_observations,
             dones=dones.to(self.device, dtype=torch.float32),
+            critic_observations=critic_observations,
+            next_critic_observations=next_critic_observations,
         )
 
     def _clip_gradients(self, parameters: Any) -> float:
@@ -357,20 +363,25 @@ class SAC:
         rewards = batch["rewards"]
         next_observations = batch["next_observations"]
         dones = batch["dones"]
+        critic_observations = batch.get("critic_observations", observations)
+        next_critic_observations = batch.get(
+            "next_critic_observations",
+            next_observations,
+        )
 
         alpha = self.get_alpha()
 
         with torch.no_grad():
             next_actions, next_log_probs = self.actor.act(next_observations)
-            target_q1 = self.target_critic1(next_observations, next_actions)
-            target_q2 = self.target_critic2(next_observations, next_actions)
+            target_q1 = self.target_critic1(next_critic_observations, next_actions)
+            target_q2 = self.target_critic2(next_critic_observations, next_actions)
             # SAC target:
             # y = r + gamma * (1 - d) * (min(Q1', Q2') - alpha * log pi(a'|s'))
             target_q = torch.min(target_q1, target_q2) - alpha * next_log_probs
             td_target = rewards + self.cfg.gamma * (1.0 - dones) * target_q
 
-        current_q1 = self.critic1(observations, actions)
-        current_q2 = self.critic2(observations, actions)
+        current_q1 = self.critic1(critic_observations, actions)
+        current_q2 = self.critic2(critic_observations, actions)
         # Critic losses:
         # L_Qi = E[(Qi(s, a) - y)^2]
         critic1_loss = F.mse_loss(current_q1, td_target)
@@ -387,8 +398,8 @@ class SAC:
         self.critic2_optimizer.step()
 
         policy_actions, log_probs = self.actor.act(observations)
-        q1_pi = self.critic1(observations, policy_actions)
-        q2_pi = self.critic2(observations, policy_actions)
+        q1_pi = self.critic1(critic_observations, policy_actions)
+        q2_pi = self.critic2(critic_observations, policy_actions)
         min_q_pi = torch.min(q1_pi, q2_pi)
         # Actor loss:
         # L_pi = E[alpha * log pi(a|s) - min(Q1(s, a), Q2(s, a))]
