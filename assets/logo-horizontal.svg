@@ -1,0 +1,17 @@
+<svg width="920" height="260" viewBox="0 0 920 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path
+    fill="#111111"
+    fill-rule="evenodd"
+    clip-rule="evenodd"
+    d="M130 28L226 218H182L164 180H96L78 218H34L130 28ZM112 146H148L130 109L112 146Z"
+  />
+  <text
+    x="270"
+    y="166"
+    fill="#111111"
+    font-family="Avenir Next, Montserrat, Helvetica Neue, sans-serif"
+    font-size="92"
+    font-weight="600"
+    letter-spacing="-3"
+  >ApexRL</text>
+</svg>

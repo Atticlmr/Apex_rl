@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-horizontal.svg" alt="ApexRL logo" width="520">
+</p>
+
 # Apex_rl
 
 A reinforcement learning library focused on pragmatic, extensible training loops.
@@ -41,7 +45,7 @@ Core runtime dependencies:
 - Python >= 3.10
 - PyTorch >= 2.0
 - Gymnasium >= 0.29
-- TensorDict >= 0.6
+- TensorDict >= 0.6, < 0.12.2
 
 ## Status
 
