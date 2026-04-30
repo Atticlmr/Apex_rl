@@ -6,6 +6,11 @@
 
 A reinforcement learning library focused on pragmatic, extensible training loops.
 
+# Example
+Training in Genesis:
+https://github.com/Atticlmr/apexrl_example.git
+
+
 Documentation: https://apex-rl-doc.readthedocs.io/
 
 ## Installation
