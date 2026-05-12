@@ -52,6 +52,7 @@ class OffPolicyRunner:
         critic_class: type | None = None,
         actor_cfg: dict[str, Any] | None = None,
         critic_cfg: dict[str, Any] | None = None,
+        log_reward_components: bool = True,
     ):
         """Initialize the off-policy runner."""
         self.env = env
@@ -124,6 +125,11 @@ class OffPolicyRunner:
         self.current_episode_lengths = torch.zeros(
             self.env.num_envs, dtype=torch.int32, device=self.device
         )
+        self.log_reward_components = log_reward_components
+        self.reward_components: dict[str, list[float]] = {}
+        self.current_reward_components: dict[str, torch.Tensor] = {}
+        self.log_buffers: dict[str, collections.deque[float]] = {}
+        self.log_buffer_maxlen = 1_000
 
     @classmethod
     def register_algorithm(
@@ -227,6 +233,76 @@ class OffPolicyRunner:
         if self.logger and scalars:
             self.logger.log_scalars(scalars, step)
 
+    def _process_extras(
+        self,
+        extras: dict[str, Any],
+        episode_ends: torch.Tensor,
+    ) -> None:
+        """Process env-provided logs and reward components from extras."""
+        log_dict = extras.get("log", {})
+        for key, value in log_dict.items():
+            if not key.startswith("/"):
+                key = f"/{key}"
+            if isinstance(value, torch.Tensor):
+                value = value.item() if value.numel() == 1 else value.mean().item()
+            if key not in self.log_buffers:
+                self.log_buffers[key] = collections.deque(maxlen=self.log_buffer_maxlen)
+            self.log_buffers[key].append(float(value))
+
+        if self.log_reward_components:
+            reward_components = extras.get("reward_components")
+            if reward_components:
+                self._accumulate_reward_components(reward_components, episode_ends)
+
+    def _accumulate_reward_components(
+        self,
+        components: dict[str, torch.Tensor],
+        episode_ends: torch.Tensor,
+    ) -> None:
+        """Accumulate step reward components and store totals at episode end."""
+        for name, values in components.items():
+            if not isinstance(values, torch.Tensor):
+                continue
+            values = values.to(self.device)
+            key = f"/reward_component/{name}"
+            if key not in self.current_reward_components:
+                self.current_reward_components[key] = torch.zeros(
+                    self.env.num_envs,
+                    device=self.device,
+                )
+
+            self.current_reward_components[key] += values
+            if episode_ends.any():
+                completed_indices = torch.where(episode_ends)[0]
+                completed_values = self.current_reward_components[key][
+                    completed_indices
+                ]
+                if key not in self.reward_components:
+                    self.reward_components[key] = []
+                for val in completed_values.detach().cpu().numpy():
+                    self.reward_components[key].append(float(val))
+                self.current_reward_components[key] *= (~episode_ends).float()
+
+    def _get_environment_metrics(self) -> dict[str, float]:
+        """Return averaged environment metrics from extras log buffers."""
+        env_metrics = {}
+        for key, buffer in self.log_buffers.items():
+            if buffer:
+                log_key = key[1:] if key.startswith("/") else key
+                env_metrics[f"env/{log_key}"] = sum(buffer) / len(buffer)
+                buffer.clear()
+        return env_metrics
+
+    def _get_reward_component_metrics(self) -> dict[str, float]:
+        """Return averaged completed-episode reward component metrics."""
+        reward_metrics = {}
+        for key, values in self.reward_components.items():
+            if values:
+                log_key = f"reward_components/{key.replace('/reward_component/', '')}"
+                reward_metrics[log_key] = sum(values) / len(values)
+                values.clear()
+        return reward_metrics
+
     def save_checkpoint(self, filename: str) -> None:
         """Save training checkpoint."""
         if not self.save_dir:
@@ -299,6 +375,7 @@ class OffPolicyRunner:
                 if terminated is None:
                     terminated = dones & ~truncated
                 terminated = self._to_bool_tensor(terminated, dones, default=False)
+                self._process_extras(extras, dones)
 
                 next_obs_for_buffer = clone_observation(next_obs)
                 final_obs = extras.get("final_observation")
@@ -367,6 +444,8 @@ class OffPolicyRunner:
                         "rollout/mean_reward": rewards.mean().item(),
                     }
                     scalars.update(last_update_stats)
+                    scalars.update(self._get_environment_metrics())
+                    scalars.update(self._get_reward_component_metrics())
                     if self.episode_rewards:
                         mean_reward = sum(self.episode_rewards) / len(
                             self.episode_rewards

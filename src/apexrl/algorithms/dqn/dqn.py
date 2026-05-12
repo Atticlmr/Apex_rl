@@ -245,12 +245,13 @@ class DQN:
             "q_network_state_dict": self.q_network.state_dict(),
             "target_q_network_state_dict": self.target_q_network.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-            "replay_buffer_state_dict": self.replay_buffer.state_dict(),
             "iteration": self.iteration,
             "total_timesteps": self.total_timesteps,
             "num_updates": self.num_updates,
             "config": self.cfg,
         }
+        if getattr(self.cfg, "save_replay_buffer", False):
+            checkpoint["replay_buffer_state_dict"] = self.replay_buffer.state_dict()
         torch.save(checkpoint, path)
 
     def load(self, path: str) -> None:

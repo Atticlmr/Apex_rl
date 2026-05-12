@@ -463,7 +463,7 @@ class SAC:
         return runner.learn(total_timesteps=total_timesteps)
 
     def save(self, path: str) -> None:
-        """Save model, optimizer, and replay state."""
+        """Save model, optimizer, and optionally replay state."""
         checkpoint = {
             "actor_state_dict": self.actor.state_dict(),
             "critic1_state_dict": self.critic1.state_dict(),
@@ -480,12 +480,13 @@ class SAC:
                 self.log_alpha.detach().cpu() if self.log_alpha is not None else None
             ),
             "alpha": self.alpha if not self.auto_alpha else None,
-            "replay_buffer_state_dict": self.replay_buffer.state_dict(),
             "iteration": self.iteration,
             "total_timesteps": self.total_timesteps,
             "num_updates": self.num_updates,
             "config": self.cfg,
         }
+        if getattr(self.cfg, "save_replay_buffer", False):
+            checkpoint["replay_buffer_state_dict"] = self.replay_buffer.state_dict()
         torch.save(checkpoint, path)
 
     def load(self, path: str) -> None:
