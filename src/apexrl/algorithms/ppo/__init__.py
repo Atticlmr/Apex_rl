@@ -11,12 +11,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright (c) 2026 GitHub@Apex_rl Developer
-# SPDX-License-Identifier: Apache-2.0
-
-# Copyright (c) 2026 GitHub@Apex_rl Developer
-# SPDX-License-Identifier: MIT
-
 """PPO (Proximal Policy Optimization) algorithm module.
 
 This module provides a flexible PPO implementation that supports:

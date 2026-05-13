@@ -126,6 +126,7 @@ class OffPolicyRunner:
             self.env.num_envs, dtype=torch.int32, device=self.device
         )
         self.log_reward_components = log_reward_components
+        self.extra_log_keys = list(getattr(self.cfg, "extra_log_keys", []))
         self.reward_components: dict[str, list[float]] = {}
         self.current_reward_components: dict[str, torch.Tensor] = {}
         self.log_buffers: dict[str, collections.deque[float]] = {}
@@ -238,21 +239,62 @@ class OffPolicyRunner:
         extras: dict[str, Any],
         episode_ends: torch.Tensor,
     ) -> None:
-        """Process env-provided logs and reward components from extras."""
-        log_dict = extras.get("log", {})
-        for key, value in log_dict.items():
-            if not key.startswith("/"):
-                key = f"/{key}"
-            if isinstance(value, torch.Tensor):
-                value = value.item() if value.numel() == 1 else value.mean().item()
-            if key not in self.log_buffers:
-                self.log_buffers[key] = collections.deque(maxlen=self.log_buffer_maxlen)
-            self.log_buffers[key].append(float(value))
+        """Process selected env extras and completed-episode reward components."""
+        for extra_key in self.extra_log_keys:
+            if extra_key in extras:
+                for key, value in self._flatten_extra_metrics(
+                    extras[extra_key],
+                    str(extra_key).strip("/"),
+                ).items():
+                    self._append_log_buffer(f"/extra/{key}", value)
 
         if self.log_reward_components:
             reward_components = extras.get("reward_components")
             if reward_components:
                 self._accumulate_reward_components(reward_components, episode_ends)
+
+    def _append_log_buffer(self, key: str, value: Any) -> None:
+        """Append a numeric metric value to the rolling log buffer."""
+        metric = self._to_scalar(value)
+        if metric is None:
+            return
+        if key not in self.log_buffers:
+            self.log_buffers[key] = collections.deque(maxlen=self.log_buffer_maxlen)
+        self.log_buffers[key].append(metric)
+
+    def _to_scalar(self, value: Any) -> float | None:
+        """Convert scalar-like values or tensors to a float metric."""
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.float().mean().item())
+        if isinstance(value, bool | int | float):
+            return float(value)
+        return None
+
+    def _flatten_extra_metrics(
+        self,
+        value: Any,
+        prefix: str = "",
+    ) -> dict[str, float]:
+        """Flatten all scalar-like extras, skipping large observation payloads."""
+        if not prefix and not isinstance(value, dict):
+            return {}
+        skip_keys = {"final_observation"}
+        metrics: dict[str, float] = {}
+        if isinstance(value, dict):
+            for key, sub_value in value.items():
+                if not prefix and key in skip_keys:
+                    continue
+                clean_key = str(key).strip("/")
+                next_prefix = f"{prefix}/{clean_key}" if prefix else clean_key
+                metrics.update(self._flatten_extra_metrics(sub_value, next_prefix))
+            return metrics
+
+        scalar = self._to_scalar(value)
+        if scalar is not None and prefix:
+            metrics[prefix] = scalar
+        return metrics
 
     def _accumulate_reward_components(
         self,
@@ -284,12 +326,15 @@ class OffPolicyRunner:
                 self.current_reward_components[key] *= (~episode_ends).float()
 
     def _get_environment_metrics(self) -> dict[str, float]:
-        """Return averaged environment metrics from extras log buffers."""
+        """Return averaged environment metrics from extra log buffers."""
         env_metrics = {}
         for key, buffer in self.log_buffers.items():
             if buffer:
                 log_key = key[1:] if key.startswith("/") else key
-                env_metrics[f"env/{log_key}"] = sum(buffer) / len(buffer)
+                metric_key = (
+                    log_key if log_key.startswith("extra/") else f"env/{log_key}"
+                )
+                env_metrics[metric_key] = sum(buffer) / len(buffer)
                 buffer.clear()
         return env_metrics
 

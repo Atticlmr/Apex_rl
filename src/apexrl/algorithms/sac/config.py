@@ -95,6 +95,7 @@ class SACConfig:
     log_interval: int = 1_000
     save_interval: int = 10_000
     save_replay_buffer: bool = False
+    extra_log_keys: list[str] = field(default_factory=list)
     logger_backend: str | list[str] = "tensorboard"
     logger_kwargs: dict[str, Any] | None = None
 

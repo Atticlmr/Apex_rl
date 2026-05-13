@@ -140,6 +140,7 @@ class PPOConfig:
     log_train_metrics_vs_iteration: bool = False
     log_episode_metrics_vs_iteration: bool = False
     log_detailed_rollout_stats: bool = False
+    extra_log_keys: list[str] = field(default_factory=list)
     logger_backend: str | list[str] = (
         "tensorboard"  # "tensorboard", "wandb", "swanlab", or list
     )

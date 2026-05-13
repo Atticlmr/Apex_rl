@@ -39,7 +39,7 @@ class OnPolicyRunner:
 
     Features:
     - Default PPO algorithm, extensible to other on-policy algorithms
-    - Automatic logging of reward components and environment metrics from extras
+    - Optional logging of selected environment extras via cfg.extra_log_keys
     - Flexible callback system for custom training logic
     - Built-in checkpointing and TensorBoard integration
 
@@ -69,8 +69,9 @@ class OnPolicyRunner:
         >>> runner.learn(total_timesteps=10_000_000)
 
     Environment Extras Format:
-        The runner automatically extracts and logs metrics from environment extras.
-        Environments should return extras in step() like this:
+        The runner can extract scalar metrics from configured extras keys and log
+        them under "extra/<key>/...". Configure this with cfg.extra_log_keys.
+        Environments can return extras in step() like this:
 
         >>> extras = {
         ...     "time_outs": time_outs,  # Required: bool tensor (num_envs,)
@@ -82,7 +83,7 @@ class OnPolicyRunner:
         ...         "stability": stability_reward,    # (num_envs,)
         ...     },
         ...
-        ...     # Optional: Custom metrics (logged directly to tensorboard)
+        ...     # Optional: Custom metrics, logged when "log" is in extra_log_keys
         ...     "log": {
         ...         "/reward/velocity_mean": velocity_reward.mean().item(),
         ...         "/robot/height_mean": robot_height.mean().item(),
@@ -209,6 +210,7 @@ class OnPolicyRunner:
             else getattr(self.cfg, "save_interval", 100)
         )
         self.log_reward_components = log_reward_components
+        self.extra_log_keys = list(getattr(self.cfg, "extra_log_keys", []))
 
         # Training state
         self.iteration = 0
@@ -219,7 +221,7 @@ class OnPolicyRunner:
         self.reward_components: dict[str, list[float]] = {}
         self.current_reward_components: dict[str, torch.Tensor] = {}
 
-        # Environment metrics log buffers (from extras["log"])
+        # Extra metrics log buffers (selected by cfg.extra_log_keys)
         self.log_buffers: dict[str, collections.deque[float]] = {}
         self.log_buffer_maxlen = 1000
 
@@ -354,7 +356,7 @@ class OnPolicyRunner:
         """Collect a rollout from the environment.
 
         Uses the agent's collect_rollout method with an extras callback
-        to capture environment metrics.
+        to capture configured environment extras.
         """
         self._call_callbacks("pre_rollout", self)
 
@@ -376,7 +378,7 @@ class OnPolicyRunner:
 
         This is called after each environment step during rollout collection.
         Extracts:
-        1. Custom metrics from extras["log"] -> directly logged to tensorboard
+        1. Selected keys from cfg.extra_log_keys -> logged under extra/<key>/...
         2. Reward components from extras["reward_components"] -> accumulated per episode
 
         Args:
@@ -385,22 +387,13 @@ class OnPolicyRunner:
             terminated: True terminal flags (excluding timeouts).
             episode_rewards: Current episode reward accumulator.
         """
-        # === Process custom metrics from extras["log"] ===
-        # These are logged directly (not accumulated)
-        log_dict = extras.get("log", {})
-        for key, value in log_dict.items():
-            # Normalize key format (ensure starts with "/")
-            if not key.startswith("/"):
-                key = f"/{key}"
-
-            # Convert tensor to float
-            if isinstance(value, torch.Tensor):
-                value = value.item() if value.numel() == 1 else value.mean().item()
-
-            # Store in buffer for batch logging
-            if key not in self.log_buffers:
-                self.log_buffers[key] = collections.deque(maxlen=self.log_buffer_maxlen)
-            self.log_buffers[key].append(float(value))
+        for extra_key in self.extra_log_keys:
+            if extra_key in extras:
+                for key, value in self._flatten_extra_metrics(
+                    extras[extra_key],
+                    str(extra_key).strip("/"),
+                ).items():
+                    self._append_log_buffer(f"/extra/{key}", value)
 
         # === Process reward components from extras["reward_components"] ===
         # These are accumulated per episode and logged at episode end
@@ -408,6 +401,49 @@ class OnPolicyRunner:
             reward_components = extras.get("reward_components")
             if reward_components:
                 self._accumulate_reward_components(reward_components, episode_ends)
+
+    def _append_log_buffer(self, key: str, value: Any) -> None:
+        """Append a numeric metric value to the rolling log buffer."""
+        metric = self._to_scalar(value)
+        if metric is None:
+            return
+        if key not in self.log_buffers:
+            self.log_buffers[key] = collections.deque(maxlen=self.log_buffer_maxlen)
+        self.log_buffers[key].append(metric)
+
+    def _to_scalar(self, value: Any) -> float | None:
+        """Convert scalar-like values or tensors to a float metric."""
+        if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+                return None
+            return float(value.float().mean().item())
+        if isinstance(value, bool | int | float):
+            return float(value)
+        return None
+
+    def _flatten_extra_metrics(
+        self,
+        value: Any,
+        prefix: str = "",
+    ) -> dict[str, float]:
+        """Flatten scalar-like extras, skipping large observation payloads."""
+        if not prefix and not isinstance(value, dict):
+            return {}
+        skip_keys = {"final_observation"}
+        metrics: dict[str, float] = {}
+        if isinstance(value, dict):
+            for key, sub_value in value.items():
+                if not prefix and key in skip_keys:
+                    continue
+                clean_key = str(key).strip("/")
+                next_prefix = f"{prefix}/{clean_key}" if prefix else clean_key
+                metrics.update(self._flatten_extra_metrics(sub_value, next_prefix))
+            return metrics
+
+        scalar = self._to_scalar(value)
+        if scalar is not None and prefix:
+            metrics[prefix] = scalar
+        return metrics
 
     def _accumulate_reward_components(
         self,
@@ -696,7 +732,7 @@ class OnPolicyRunner:
         # Log reward components
         self._log_reward_components()
 
-        # Log environment metrics from extras
+        # Log selected environment extras
         self._log_environment_metrics()
 
     def _log_reward_components(self) -> None:
@@ -712,14 +748,17 @@ class OnPolicyRunner:
         self._log_scalars(reward_metrics, self.iteration)
 
     def _log_environment_metrics(self) -> None:
-        """Log environment-provided metrics from log buffers."""
+        """Log environment-provided metrics from extra log buffers."""
         env_metrics = {}
         for key, buffer in self.log_buffers.items():
             if buffer:
                 mean_val = sum(buffer) / len(buffer)
                 # Remove leading "/" for logger key
                 log_key = key[1:] if key.startswith("/") else key
-                env_metrics[f"env/{log_key}"] = mean_val
+                metric_key = (
+                    log_key if log_key.startswith("extra/") else f"env/{log_key}"
+                )
+                env_metrics[metric_key] = mean_val
                 buffer.clear()
         self._log_scalars(env_metrics, self.iteration)
 
