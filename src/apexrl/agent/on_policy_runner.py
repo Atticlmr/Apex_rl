@@ -114,7 +114,6 @@ class OnPolicyRunner:
         save_dir: str | None = None,
         device: torch.device | None = None,
         # Configuration
-        log_reward_components: bool = True,
         log_interval: int | None = None,
         save_interval: int | None = None,
     ):
@@ -140,7 +139,6 @@ class OnPolicyRunner:
             log_dir: Directory for TensorBoard logs.
             save_dir: Directory for checkpoints. Defaults to log_dir.
             device: Device for training. Auto-detects if None.
-            log_reward_components: Whether to log reward components from extras.
             log_interval: Logging interval in iterations. Defaults to cfg.log_interval.
             save_interval: Checkpoint saving interval. Defaults to cfg.save_interval.
 
@@ -209,17 +207,12 @@ class OnPolicyRunner:
             if save_interval is not None
             else getattr(self.cfg, "save_interval", 100)
         )
-        self.log_reward_components = log_reward_components
         self.extra_log_keys = list(getattr(self.cfg, "extra_log_keys", []))
 
         # Training state
         self.iteration = 0
         self.total_timesteps = 0
         self.start_time = None
-
-        # Episode-level reward component tracking
-        self.reward_components: dict[str, list[float]] = {}
-        self.current_reward_components: dict[str, torch.Tensor] = {}
 
         # Extra metrics log buffers (selected by cfg.extra_log_keys)
         self.log_buffers: dict[str, collections.deque[float]] = {}
@@ -379,7 +372,6 @@ class OnPolicyRunner:
         This is called after each environment step during rollout collection.
         Extracts:
         1. Selected keys from cfg.extra_log_keys -> logged under extra/<key>/...
-        2. Reward components from extras["reward_components"] -> accumulated per episode
 
         Args:
             extras: Extras dict from env.step().
@@ -394,13 +386,6 @@ class OnPolicyRunner:
                     str(extra_key).strip("/"),
                 ).items():
                     self._append_log_buffer(f"/extra/{key}", value)
-
-        # === Process reward components from extras["reward_components"] ===
-        # These are accumulated per episode and logged at episode end
-        if self.log_reward_components:
-            reward_components = extras.get("reward_components")
-            if reward_components:
-                self._accumulate_reward_components(reward_components, episode_ends)
 
     def _append_log_buffer(self, key: str, value: Any) -> None:
         """Append a numeric metric value to the rolling log buffer."""
@@ -444,55 +429,6 @@ class OnPolicyRunner:
         if scalar is not None and prefix:
             metrics[prefix] = scalar
         return metrics
-
-    def _accumulate_reward_components(
-        self,
-        components: dict[str, torch.Tensor],
-        episode_ends: torch.Tensor,
-    ) -> None:
-        """Accumulate reward components per episode.
-
-        For each reward component:
-        1. Accumulate step-level values during the episode
-        2. When episode ends, store the total
-        3. Reset accumulator for completed episodes
-
-        Args:
-            components: Dict of {component_name: step_reward_tensor}.
-            episode_ends: Bool tensor indicating completed episodes.
-        """
-        for name, values in components.items():
-            # Ensure tensor
-            if not isinstance(values, torch.Tensor):
-                continue
-            values = values.to(self.device)
-
-            # Initialize accumulator for this component if needed
-            key = f"/reward_component/{name}"
-            if key not in self.current_reward_components:
-                self.current_reward_components[key] = torch.zeros(
-                    self.env.num_envs, device=self.device
-                )
-
-            # Accumulate step rewards
-            self.current_reward_components[key] += values
-
-            # Handle completed episodes
-            if episode_ends.any():
-                completed_indices = torch.where(episode_ends)[0]
-                completed_values = self.current_reward_components[key][
-                    completed_indices
-                ]
-
-                # Store completed episode totals
-                if key not in self.reward_components:
-                    self.reward_components[key] = []
-
-                for val in completed_values.cpu().numpy():
-                    self.reward_components[key].append(float(val))
-
-                # Reset accumulators for completed episodes
-                self.current_reward_components[key] *= (~episode_ends).float()
 
     def update(self) -> dict[str, float]:
         """Update policy using collected rollout."""
@@ -729,23 +665,8 @@ class OnPolicyRunner:
             self.agent.episode_rewards.clear()
             self.agent.episode_lengths.clear()
 
-        # Log reward components
-        self._log_reward_components()
-
         # Log selected environment extras
         self._log_environment_metrics()
-
-    def _log_reward_components(self) -> None:
-        """Log accumulated reward components to logger."""
-        reward_metrics = {}
-        for key, values in self.reward_components.items():
-            if values:
-                mean_val = sum(values) / len(values)
-                # Convert "/reward_component/name" to logger key
-                log_key = f"reward_components/{key.replace('/reward_component/', '')}"
-                reward_metrics[log_key] = mean_val
-                values.clear()
-        self._log_scalars(reward_metrics, self.iteration)
 
     def _log_environment_metrics(self) -> None:
         """Log environment-provided metrics from extra log buffers."""

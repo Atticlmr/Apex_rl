@@ -125,7 +125,6 @@ def test_on_policy_runner_logging_defaults_avoid_redundant_metrics():
     runner.total_timesteps = 128
     runner.iteration = 3
     runner.log_interval = runner.cfg.log_interval
-    runner.reward_components = {}
     runner.log_buffers = {}
     runner.agent = SimpleNamespace(
         rollout_buffer=SimpleNamespace(
@@ -192,9 +191,7 @@ def test_wandb_logger_backend_integration(monkeypatch, tmp_path):
     logger.log_config({"lr": 3e-4, "algo": "ppo"})
     logger.close()
 
-    assert fake_wandb.log_calls == [
-        ({"train/loss": 0.1, "episode/reward": 10.0}, 12)
-    ]
+    assert fake_wandb.log_calls == [({"train/loss": 0.1, "episode/reward": 10.0}, 12)]
     assert fake_wandb.config.updates == [{"lr": 3e-4, "algo": "ppo"}]
     assert fake_wandb.finish_calls == 1
 
