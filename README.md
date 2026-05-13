@@ -6,9 +6,24 @@
 
 A reinforcement learning library focused on pragmatic, extensible training loops.
 
-# Example
-Training in Genesis:
-https://github.com/Atticlmr/apexrl_example.git
+## Examples
+
+Practice examples are maintained in the
+[apexrl_example](https://github.com/Atticlmr/apexrl_example) repository. It
+includes Genesis Go2 locomotion, Genesis Crazyflie hovering, and Atari Breakout
+DQN training scripts.
+
+### Genesis Go2 Locomotion
+
+<video src="https://raw.githubusercontent.com/Atticlmr/apexrl_example/main/go2_example/go2.mp4" controls muted loop playsinline width="720">
+  Go2 locomotion demo video.
+</video>
+
+### Genesis Crazyflie Hovering
+
+<video src="https://raw.githubusercontent.com/Atticlmr/apexrl_example/main/drone_example/crayflie.mp4" controls muted loop playsinline width="720">
+  Crazyflie hovering demo video.
+</video>
 
 
 Documentation: https://apex-rl-doc.readthedocs.io/
