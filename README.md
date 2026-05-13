@@ -25,6 +25,12 @@ DQN training scripts.
   Crazyflie hovering demo video.
 </video>
 
+### Atari Breakout DQN
+
+<video src="https://raw.githubusercontent.com/Atticlmr/apexrl_example/main/breakout_dqn_example/videos/dqn_dinal.mp4" controls muted loop playsinline width="720">
+  Atari Breakout DQN demo video.
+</video>
+
 
 Documentation: https://apex-rl-doc.readthedocs.io/
 
