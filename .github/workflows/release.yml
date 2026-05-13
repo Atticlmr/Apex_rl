@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -30,10 +32,32 @@ jobs:
       - name: Build package
         run: python -m build
 
+      - name: Extract changelog notes
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tag[1:] if tag.startswith("v") else tag
+          changelog = Path("docs/source/changelog.rst").read_text(encoding="utf-8")
+          pattern = re.compile(
+              rf"^\[{re.escape(version)}\][^\n]*\n[-]+\n(?P<body>.*?)(?=^\[[0-9]|\Z)",
+              re.MULTILINE | re.DOTALL,
+          )
+          match = pattern.search(changelog)
+          if match is None:
+              raise SystemExit(f"No changelog entry found for {version}")
+
+          body = match.group("body").strip()
+          Path("release-notes.md").write_text(body + "\n", encoding="utf-8")
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          generate_release_notes: true
+          body_path: release-notes.md
           files: |
             dist/*
         env:
