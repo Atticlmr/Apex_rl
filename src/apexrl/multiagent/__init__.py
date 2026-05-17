@@ -13,8 +13,15 @@
 
 """Multi-agent reinforcement learning support."""
 
-from apexrl.multiagent.algorithms import MAPPO, MAPPOConfig
+from apexrl.multiagent.algorithms import IPPO, MAPPO, IPPOConfig, MAPPOConfig
 from apexrl.multiagent.envs import MultiAgentVecEnv
 from apexrl.multiagent.runner import MultiAgentRunner
 
-__all__ = ["MAPPO", "MAPPOConfig", "MultiAgentRunner", "MultiAgentVecEnv"]
+__all__ = [
+    "IPPO",
+    "IPPOConfig",
+    "MAPPO",
+    "MAPPOConfig",
+    "MultiAgentRunner",
+    "MultiAgentVecEnv",
+]

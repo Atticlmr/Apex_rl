@@ -19,7 +19,14 @@ import torch
 from gymnasium import spaces
 
 from apexrl.models import MLPActor, MLPCritic
-from apexrl.multiagent import MAPPO, MAPPOConfig, MultiAgentRunner, MultiAgentVecEnv
+from apexrl.multiagent import (
+    IPPO,
+    MAPPO,
+    IPPOConfig,
+    MAPPOConfig,
+    MultiAgentRunner,
+    MultiAgentVecEnv,
+)
 from apexrl.multiagent.buffer import MultiAgentRolloutBuffer
 
 
@@ -228,6 +235,64 @@ def test_mappo_collect_update_and_learn_smoke(tmp_path):
     expected_timesteps = cfg.num_steps * env.num_envs * len(env.possible_agents) * 2
     assert result["total_timesteps"] == expected_timesteps
     assert len(agent.episode_rewards) > 0
+
+
+def test_ippo_uses_local_observations_for_critics(tmp_path):
+    """IPPO should train decentralized critics from per-agent observations."""
+    env = DummyDroneTransportVecEnv(num_envs=2, num_agents=2)
+    cfg = IPPOConfig(
+        num_steps=4,
+        num_epochs=1,
+        minibatch_size=4,
+        actor_hidden_dims=[16],
+        critic_hidden_dims=[16],
+        learning_rate_schedule="constant",
+        device="cpu",
+    )
+    agent = IPPO(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+
+    assert not agent.cfg.centralized_critic
+    assert agent.rollout_buffer.states is None
+    for agent_id in env.possible_agents:
+        assert agent.critics[agent_id].obs_space == env.observation_spaces[agent_id]
+
+    rollout_stats = agent.collect_rollout()
+    update_stats = agent.update()
+    assert "rollout/mean_reward" in rollout_stats
+    assert "train/policy_loss" in update_stats
+
+    checkpoint = tmp_path / "ippo.pt"
+    agent.save(str(checkpoint))
+    agent.load(str(checkpoint))
+
+
+def test_ippo_rejects_centralized_critic():
+    """IPPO config should not allow centralized critic mode."""
+    cfg = IPPOConfig(centralized_critic=True)
+    try:
+        IPPO(
+            possible_agents=["agent_0"],
+            observation_spaces={
+                "agent_0": spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=float)
+            },
+            action_spaces={
+                "agent_0": spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=float)
+            },
+            cfg=cfg,
+            actor_class=MLPActor,
+            critic_class=MLPCritic,
+            device=torch.device("cpu"),
+        )
+    except ValueError as exc:
+        assert "centralized_critic=False" in str(exc)
+    else:
+        raise AssertionError("IPPO should reject centralized_critic=True")
 
 
 def test_multiagent_runner_logs_and_checkpoints(tmp_path):

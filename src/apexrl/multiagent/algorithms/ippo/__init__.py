@@ -11,9 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-agent algorithms."""
+"""IPPO algorithm."""
 
-from apexrl.multiagent.algorithms.ippo import IPPO, IPPOConfig
-from apexrl.multiagent.algorithms.mappo import MAPPO, MAPPOConfig
+from apexrl.multiagent.algorithms.ippo.config import IPPOConfig
+from apexrl.multiagent.algorithms.ippo.ippo import IPPO
 
-__all__ = ["IPPO", "IPPOConfig", "MAPPO", "MAPPOConfig"]
+__all__ = ["IPPO", "IPPOConfig"]

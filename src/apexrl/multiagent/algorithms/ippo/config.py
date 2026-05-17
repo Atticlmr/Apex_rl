@@ -11,9 +11,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-agent algorithms."""
+"""Configuration for Independent PPO (IPPO)."""
 
-from apexrl.multiagent.algorithms.ippo import IPPO, IPPOConfig
-from apexrl.multiagent.algorithms.mappo import MAPPO, MAPPOConfig
+from __future__ import annotations
 
-__all__ = ["IPPO", "IPPOConfig", "MAPPO", "MAPPOConfig"]
+from dataclasses import dataclass
+
+from apexrl.multiagent.algorithms.mappo import MAPPOConfig
+
+
+@dataclass
+class IPPOConfig(MAPPOConfig):
+    """Configuration for IPPO.
+
+    IPPO keeps the MAPPO training loop but uses decentralized critics by
+    default: each value function consumes the same local observation as its
+    corresponding policy.
+    """
+
+    centralized_critic: bool = False
