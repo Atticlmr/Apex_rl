@@ -23,6 +23,7 @@ from apexrl.utils.logger import (
     get_logger,
 )
 from apexrl.utils.observation import (
+    Observation,
     TensorDict,
     TensorLeafSpec,
     actor_space_from_observation_space,
@@ -52,6 +53,7 @@ __all__ = [
     "MultiLogger",
     "get_logger",
     "TensorDict",
+    "Observation",
     "TensorLeafSpec",
     "actor_space_from_observation_space",
     "critic_space_from_observation_space",

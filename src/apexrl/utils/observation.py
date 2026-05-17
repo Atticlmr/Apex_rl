@@ -230,10 +230,7 @@ def zeros_like_observation(observation: Observation) -> Observation:
     """Create a zero-filled observation tree with the same structure."""
     if _is_observation_mapping(observation):
         return _wrap_tensordict(
-            {
-                key: zeros_like_observation(value)
-                for key, value in observation.items()
-            },
+            {key: zeros_like_observation(value) for key, value in observation.items()},
             batch_size=getattr(observation, "batch_size", None),
         )
     return torch.zeros_like(observation)
@@ -296,7 +293,8 @@ def flatten_observation(observation: Observation) -> torch.Tensor:
     """Flatten recursive observation trees into feature tensors."""
     if _is_observation_mapping(observation):
         flat_parts = [
-            flatten_observation(observation[key]) for key in _observation_keys(observation)
+            flatten_observation(observation[key])
+            for key in _observation_keys(observation)
         ]
         if not flat_parts:
             raise ValueError("Observation TensorDict is empty")
