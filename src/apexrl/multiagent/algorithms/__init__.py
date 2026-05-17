@@ -13,7 +13,8 @@
 
 """Multi-agent algorithms."""
 
+from apexrl.multiagent.algorithms.happo import HAPPO, HAPPOConfig
 from apexrl.multiagent.algorithms.ippo import IPPO, IPPOConfig
 from apexrl.multiagent.algorithms.mappo import MAPPO, MAPPOConfig
 
-__all__ = ["IPPO", "IPPOConfig", "MAPPO", "MAPPOConfig"]
+__all__ = ["HAPPO", "HAPPOConfig", "IPPO", "IPPOConfig", "MAPPO", "MAPPOConfig"]

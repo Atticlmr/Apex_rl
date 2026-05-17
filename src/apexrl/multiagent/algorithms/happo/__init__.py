@@ -11,26 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-agent reinforcement learning support."""
+"""HAPPO algorithm."""
 
-from apexrl.multiagent.algorithms import (
-    HAPPO,
-    IPPO,
-    MAPPO,
-    HAPPOConfig,
-    IPPOConfig,
-    MAPPOConfig,
-)
-from apexrl.multiagent.envs import MultiAgentVecEnv
-from apexrl.multiagent.runner import MultiAgentRunner
+from apexrl.multiagent.algorithms.happo.config import HAPPOConfig
+from apexrl.multiagent.algorithms.happo.happo import HAPPO
 
-__all__ = [
-    "IPPO",
-    "HAPPO",
-    "HAPPOConfig",
-    "IPPOConfig",
-    "MAPPO",
-    "MAPPOConfig",
-    "MultiAgentRunner",
-    "MultiAgentVecEnv",
-]
+__all__ = ["HAPPO", "HAPPOConfig"]
