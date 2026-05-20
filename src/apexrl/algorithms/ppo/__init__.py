@@ -62,10 +62,14 @@ Custom Network Example:
 """
 
 from apexrl.algorithms.ppo.config import PPOConfig, PPOStorageConfig
+from apexrl.algorithms.ppo.config_rnn import RecurrentPPOConfig
 from apexrl.algorithms.ppo.ppo import PPO
+from apexrl.algorithms.ppo.ppo_rnn import RecurrentPPO
 
 __all__ = [
     "PPO",
     "PPOConfig",
     "PPOStorageConfig",
+    "RecurrentPPO",
+    "RecurrentPPOConfig",
 ]
