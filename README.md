@@ -376,6 +376,7 @@ Planned algorithm work for upcoming versions:
 
 - AMP
 - Policy distillation
+- RNN support for PPO, Multi-agent algorithm
 
 ## License
 

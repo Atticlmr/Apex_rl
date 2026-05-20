@@ -266,9 +266,16 @@ class OnPolicyRunner:
         """Create algorithm agent based on name."""
         # Lazy import and register PPO if not already registered
         if not self.ALGORITHMS:
-            from apexrl.algorithms.ppo import PPO, PPOConfig
+            from apexrl.algorithms.ppo import (
+                PPO,
+                PPOConfig,
+                RecurrentPPO,
+                RecurrentPPOConfig,
+            )
 
             self.register_algorithm("ppo", PPO, PPOConfig)
+            self.register_algorithm("recurrent_ppo", RecurrentPPO, RecurrentPPOConfig)
+            self.register_algorithm("ppo_rnn", RecurrentPPO, RecurrentPPOConfig)
 
         algorithm = algorithm.lower()
         if algorithm not in self.ALGORITHMS:

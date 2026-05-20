@@ -32,6 +32,7 @@ from apexrl.models.mlp import (
     MLPSquashedGaussianActor,
     build_mlp,
 )
+from apexrl.models.recurrent import GRUActor, GRUCritic, GRUDiscreteActor
 
 __all__ = [
     # Base classes
@@ -49,6 +50,10 @@ __all__ = [
     "MLPQNetwork",
     "MLPContinuousQNetwork",
     "build_mlp",
+    # Recurrent implementations
+    "GRUActor",
+    "GRUCritic",
+    "GRUDiscreteActor",
     # CNN implementations
     "CNNActor",
     "CNNCritic",

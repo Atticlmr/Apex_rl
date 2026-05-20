@@ -15,8 +15,10 @@
 
 from apexrl.buffer.replay_buffer import ReplayBuffer
 from apexrl.buffer.rollout_buffer import RolloutBuffer
+from apexrl.buffer.rollout_rnn_buffer import RolloutRNNBuffer
 
 __all__ = [
     "ReplayBuffer",
     "RolloutBuffer",
+    "RolloutRNNBuffer",
 ]

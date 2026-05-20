@@ -20,8 +20,10 @@ from gymnasium import spaces
 
 from apexrl.models import MLPActor, MLPCritic
 from apexrl.multiagent import (
+    HAPPO,
     IPPO,
     MAPPO,
+    HAPPOConfig,
     IPPOConfig,
     MAPPOConfig,
     MultiAgentRunner,
@@ -293,6 +295,65 @@ def test_ippo_rejects_centralized_critic():
         assert "centralized_critic=False" in str(exc)
     else:
         raise AssertionError("IPPO should reject centralized_critic=True")
+
+
+def test_happo_sequential_update_smoke(tmp_path):
+    """HAPPO should update separate actors with sequential correction."""
+    env = DummyDroneTransportVecEnv(num_envs=2, num_agents=3)
+    cfg = HAPPOConfig(
+        num_steps=4,
+        num_epochs=1,
+        minibatch_size=4,
+        actor_hidden_dims=[16],
+        critic_hidden_dims=[16],
+        learning_rate_schedule="constant",
+        shuffle_agent_order=False,
+        device="cpu",
+    )
+    agent = HAPPO(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+
+    actor_ids = {id(agent.actors[agent_id]) for agent_id in env.possible_agents}
+    assert len(actor_ids) == len(env.possible_agents)
+
+    rollout_stats = agent.collect_rollout()
+    update_stats = agent.update()
+    assert "rollout/mean_reward" in rollout_stats
+    assert "train/policy_loss" in update_stats
+    assert "train/happo_correction" in update_stats
+
+    checkpoint = tmp_path / "happo.pt"
+    agent.save(str(checkpoint))
+    agent.load(str(checkpoint))
+
+
+def test_happo_rejects_shared_actor():
+    """HAPPO should not accept shared actor mode."""
+    cfg = HAPPOConfig(share_actor=True)
+    try:
+        HAPPO(
+            possible_agents=["agent_0"],
+            observation_spaces={
+                "agent_0": spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=float)
+            },
+            action_spaces={
+                "agent_0": spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=float)
+            },
+            state_space=spaces.Box(low=-1.0, high=1.0, shape=(3,), dtype=float),
+            cfg=cfg,
+            actor_class=MLPActor,
+            critic_class=MLPCritic,
+            device=torch.device("cpu"),
+        )
+    except ValueError as exc:
+        assert "share_actor=False" in str(exc)
+    else:
+        raise AssertionError("HAPPO should reject share_actor=True")
 
 
 def test_multiagent_runner_logs_and_checkpoints(tmp_path):

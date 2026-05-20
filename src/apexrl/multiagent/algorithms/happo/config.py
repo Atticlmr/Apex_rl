@@ -11,26 +11,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-agent reinforcement learning support."""
+"""Configuration for Heterogeneous-Agent PPO (HAPPO)."""
 
-from apexrl.multiagent.algorithms import (
-    HAPPO,
-    IPPO,
-    MAPPO,
-    HAPPOConfig,
-    IPPOConfig,
-    MAPPOConfig,
-)
-from apexrl.multiagent.envs import MultiAgentVecEnv
-from apexrl.multiagent.runner import MultiAgentRunner
+from __future__ import annotations
 
-__all__ = [
-    "IPPO",
-    "HAPPO",
-    "HAPPOConfig",
-    "IPPOConfig",
-    "MAPPO",
-    "MAPPOConfig",
-    "MultiAgentRunner",
-    "MultiAgentVecEnv",
-]
+from dataclasses import dataclass
+
+from apexrl.multiagent.algorithms.mappo import MAPPOConfig
+
+
+@dataclass
+class HAPPOConfig(MAPPOConfig):
+    """Configuration for HAPPO.
+
+    HAPPO uses sequential per-agent policy updates with a correction factor
+    from agents updated earlier in the current update order.
+    """
+
+    share_actor: bool = False
+    shuffle_agent_order: bool = True

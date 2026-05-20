@@ -14,7 +14,16 @@
 """Algorithms module for ApexRL."""
 
 from apexrl.algorithms.dqn import DQN, DQNConfig
-from apexrl.algorithms.ppo import PPO, PPOConfig
+from apexrl.algorithms.ppo import PPO, PPOConfig, RecurrentPPO, RecurrentPPOConfig
 from apexrl.algorithms.sac import SAC, SACConfig
 
-__all__ = ["DQN", "DQNConfig", "PPO", "PPOConfig", "SAC", "SACConfig"]
+__all__ = [
+    "DQN",
+    "DQNConfig",
+    "PPO",
+    "PPOConfig",
+    "RecurrentPPO",
+    "RecurrentPPOConfig",
+    "SAC",
+    "SACConfig",
+]
