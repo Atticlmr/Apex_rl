@@ -11,22 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Algorithms module for ApexRL."""
+"""Twin Delayed DDPG package."""
 
-from apexrl.algorithms.dqn import DQN, DQNConfig
-from apexrl.algorithms.ppo import PPO, PPOConfig, RecurrentPPO, RecurrentPPOConfig
-from apexrl.algorithms.sac import SAC, SACConfig
-from apexrl.algorithms.td3 import TD3, TD3Config
+from apexrl.algorithms.td3.config import TD3Config
+from apexrl.algorithms.td3.td3 import TD3
 
-__all__ = [
-    "DQN",
-    "DQNConfig",
-    "PPO",
-    "PPOConfig",
-    "RecurrentPPO",
-    "RecurrentPPOConfig",
-    "SAC",
-    "SACConfig",
-    "TD3",
-    "TD3Config",
-]
+__all__ = ["TD3", "TD3Config"]
