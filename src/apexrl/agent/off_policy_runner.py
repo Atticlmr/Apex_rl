@@ -157,9 +157,11 @@ class OffPolicyRunner:
         if not self.ALGORITHMS:
             from apexrl.algorithms.dqn import DQN, DQNConfig
             from apexrl.algorithms.sac import SAC, SACConfig
+            from apexrl.algorithms.td3 import TD3, TD3Config
 
             self.register_algorithm("dqn", DQN, DQNConfig)
             self.register_algorithm("sac", SAC, SACConfig)
+            self.register_algorithm("td3", TD3, TD3Config)
 
         algorithm = algorithm.lower()
         if algorithm not in self.ALGORITHMS:
@@ -195,7 +197,7 @@ class OffPolicyRunner:
                 log_dir=None,
                 device=device,
             )
-        elif algorithm == "sac":
+        elif algorithm in {"sac", "td3"}:
             agent = agent_class(
                 env=env,
                 cfg=cfg,

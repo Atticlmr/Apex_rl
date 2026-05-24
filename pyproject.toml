@@ -13,7 +13,7 @@ dependencies = [
     "numpy>=1.24.0",
     "gymnasium>=0.29.0",
     "tensordict>=0.6.0,<0.12.2",
-    "tensorboard>=2.15.0",
+    "tensorboard",
 ]
 
 [project.optional-dependencies]

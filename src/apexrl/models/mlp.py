@@ -762,6 +762,83 @@ class MLPSquashedGaussianActor(ContinuousActor):
         return log_prob, entropy
 
 
+class MLPDeterministicActor(ContinuousActor):
+    """MLP deterministic actor for DDPG/TD3-style continuous control.
+
+    The actor maps observations directly to bounded environment actions. It
+    does not represent a probability distribution and therefore returns zero
+    log probabilities for compatibility with generic actor interfaces.
+    """
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Box,
+        cfg: dict[str, Any] | None = None,
+    ):
+        """Initialize the deterministic continuous actor."""
+        cfg = cfg or {}
+        super().__init__(obs_space, action_space, cfg)
+
+        hidden_dims = cfg.get("hidden_dims", [256, 256])
+        activation = cfg.get("activation", "relu")
+        layer_norm = cfg.get("layer_norm", False)
+
+        obs_dim = _obs_space_numel(obs_space)
+        self.net = build_mlp(
+            input_dim=obs_dim,
+            hidden_dims=hidden_dims,
+            output_dim=self.action_dim,
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        _init_policy_network(self, self.net[-1])
+
+        action_low = torch.as_tensor(action_space.low, dtype=torch.float32)
+        action_high = torch.as_tensor(action_space.high, dtype=torch.float32)
+        self.register_buffer("action_scale", (action_high - action_low) / 2.0)
+        self.register_buffer("action_bias", (action_high + action_low) / 2.0)
+
+    def forward(self, obs: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
+        """Return bounded deterministic actions with shape ``(batch, action_dim)``."""
+        raw_action = self.net(flatten_observation(obs))
+        return torch.tanh(raw_action) * self.action_scale + self.action_bias
+
+    def get_action_dist(
+        self, obs: torch.Tensor | dict[str, torch.Tensor]
+    ) -> torch.distributions.Normal:
+        """Return a degenerate Normal distribution centered on the action.
+
+        This method exists for compatibility with ``ContinuousActor`` but is not
+        used by TD3 training.
+        """
+        mean = self.forward(obs)
+        std = torch.full_like(mean, 1e-6)
+        return torch.distributions.Normal(mean, std)
+
+    def act(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        deterministic: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return deterministic actions and zero log probabilities."""
+        del deterministic
+        actions = self.forward(obs)
+        log_prob = torch.zeros(actions.shape[0], device=actions.device)
+        return actions, log_prob
+
+    def evaluate(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return placeholder log probabilities and entropy for compatibility."""
+        del actions
+        predicted = self.forward(obs)
+        zeros = torch.zeros(predicted.shape[0], device=predicted.device)
+        return zeros, zeros
+
+
 class MLPContinuousQNetwork(ContinuousQNetwork):
     """MLP-based continuous-action critic returning ``Q(s, a)``."""
 
