@@ -80,6 +80,7 @@ Core runtime dependencies:
 | PPO | ✅ Available | `OnPolicyRunner`, discrete + continuous actions, asymmetric actor-critic |
 | DQN | ✅ Available | `OffPolicyRunner`, Double DQN, Dueling DQN |
 | SAC | ✅ Available | `OffPolicyRunner`, squashed Gaussian actor, twin critics |
+| FlashSAC | ✅ Available | high-throughput SAC variant with large-batch defaults and critic norm controls |
 
 ## What Changed In Current Version
 

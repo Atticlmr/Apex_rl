@@ -11,25 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Algorithms module for ApexRL."""
+"""FlashSAC package."""
 
-from apexrl.algorithms.dqn import DQN, DQNConfig
-from apexrl.algorithms.flash_sac import FlashSAC, FlashSACConfig
-from apexrl.algorithms.ppo import PPO, PPOConfig, RecurrentPPO, RecurrentPPOConfig
-from apexrl.algorithms.sac import SAC, SACConfig
-from apexrl.algorithms.td3 import TD3, TD3Config
+from apexrl.algorithms.flash_sac.config import FlashSACConfig
+from apexrl.algorithms.flash_sac.flash_sac import FlashSAC
 
-__all__ = [
-    "DQN",
-    "DQNConfig",
-    "FlashSAC",
-    "FlashSACConfig",
-    "PPO",
-    "PPOConfig",
-    "RecurrentPPO",
-    "RecurrentPPOConfig",
-    "SAC",
-    "SACConfig",
-    "TD3",
-    "TD3Config",
-]
+__all__ = ["FlashSAC", "FlashSACConfig"]

@@ -29,6 +29,7 @@ from apexrl.models.mlp import (
     MLPCritic,
     MLPDeterministicActor,
     MLPDiscreteActor,
+    MLPFeatureQNetwork,
     MLPQNetwork,
     MLPSquashedGaussianActor,
     build_mlp,
@@ -50,6 +51,7 @@ __all__ = [
     "MLPDiscreteActor",
     "MLPQNetwork",
     "MLPContinuousQNetwork",
+    "MLPFeatureQNetwork",
     "MLPDeterministicActor",
     "build_mlp",
     # Recurrent implementations
