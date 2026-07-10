@@ -20,6 +20,7 @@ logging, checkpointing, and environment interaction for on-policy RL algorithms.
 from __future__ import annotations
 
 import collections
+import math
 import os
 import time
 from collections.abc import Callable
@@ -210,8 +211,8 @@ class OnPolicyRunner:
         self.extra_log_keys = list(getattr(self.cfg, "extra_log_keys", []))
 
         # Training state
-        self.iteration = 0
-        self.total_timesteps = 0
+        self.iteration = getattr(self.agent, "iteration", 0)
+        self.total_timesteps = getattr(self.agent, "total_timesteps", 0)
         self.start_time = None
 
         # Extra metrics log buffers (selected by cfg.extra_log_keys)
@@ -465,25 +466,14 @@ class OnPolicyRunner:
             Training history dict with keys: iterations, timesteps,
             episode_rewards, etc.
         """
-        # Determine iterations with priority:
-        # num_iterations > total_timesteps > cfg.max_iterations
         transitions_per_iter = self.cfg.num_steps * self.env.num_envs
-
-        if num_iterations is not None:
-            total_iters = num_iterations
-        elif total_timesteps is not None:
-            total_iters = total_timesteps // transitions_per_iter
-        elif (
-            hasattr(self.cfg, "max_iterations") and self.cfg.max_iterations is not None
-        ):
-            total_iters = self.cfg.max_iterations
-        else:
-            raise ValueError(
-                "Must provide one of:\n"
-                "  - num_iterations argument to learn()\n"
-                "  - total_timesteps argument to learn()\n"
-                "  - cfg.max_iterations in config (e.g., PPOConfig(max_iterations=100))"
-            )
+        total_iters = self._resolve_total_iterations(
+            total_timesteps=total_timesteps,
+            num_iterations=num_iterations,
+            transitions_per_iter=transitions_per_iter,
+        )
+        start_iteration = self.iteration
+        target_iteration = start_iteration + total_iters
 
         print(
             "Training for "
@@ -513,8 +503,7 @@ class OnPolicyRunner:
         }
 
         try:
-            for iteration in range(total_iters):
-                self.iteration = iteration
+            for iteration in range(start_iteration, target_iteration):
                 self.agent.iteration = iteration
 
                 self._call_callbacks("pre_iteration", self)
@@ -525,16 +514,21 @@ class OnPolicyRunner:
 
                 # Learning rate schedule
                 if hasattr(self.agent, "adjust_learning_rate"):
-                    self.agent.adjust_learning_rate(iteration, total_iters)
+                    self.agent.adjust_learning_rate(iteration, target_iteration)
+
+                self.iteration = iteration + 1
+                self.agent.iteration = self.iteration
 
                 # Record history
-                self._update_history(iteration, rollout_stats, update_stats, history)
+                self._update_history(
+                    self.iteration, rollout_stats, update_stats, history
+                )
 
                 # Logging
-                if iteration % self.log_interval == 0:
+                if (iteration - start_iteration) % self.log_interval == 0:
                     self._log_iteration(
-                        iteration,
-                        total_iters,
+                        self.iteration,
+                        target_iteration,
                         rollout_stats,
                         update_stats,
                         last_log_time,
@@ -542,8 +536,12 @@ class OnPolicyRunner:
                     last_log_time = time.time()
 
                 # Checkpointing
-                if self.save_dir and iteration % self.save_interval == 0:
-                    self.save_checkpoint(f"checkpoint_{iteration}.pt")
+                if (
+                    self.save_dir
+                    and self.save_interval > 0
+                    and self.iteration % self.save_interval == 0
+                ):
+                    self.save_checkpoint(f"checkpoint_{self.iteration}.pt")
 
                 self._call_callbacks(
                     "post_iteration", self, {**rollout_stats, **update_stats}
@@ -563,6 +561,29 @@ class OnPolicyRunner:
             "final_iteration": self.iteration,
             "total_timesteps": self.total_timesteps,
         }
+
+    def _resolve_total_iterations(
+        self,
+        *,
+        total_timesteps: int | None,
+        num_iterations: int | None,
+        transitions_per_iter: int,
+    ) -> int:
+        """Resolve additional iterations without undershooting target totals."""
+        if num_iterations is not None:
+            return max(0, int(num_iterations))
+        if total_timesteps is not None:
+            remaining_timesteps = max(0, int(total_timesteps) - self.total_timesteps)
+            return math.ceil(remaining_timesteps / transitions_per_iter)
+        max_iterations = getattr(self.cfg, "max_iterations", None)
+        if max_iterations is not None:
+            return max(0, int(max_iterations) - self.iteration)
+        raise ValueError(
+            "Must provide one of:\n"
+            "  - num_iterations argument to learn()\n"
+            "  - total_timesteps argument to learn()\n"
+            "  - cfg.max_iterations in config (e.g., PPOConfig(max_iterations=100))"
+        )
 
     def _update_history(
         self,

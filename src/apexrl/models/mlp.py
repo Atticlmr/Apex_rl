@@ -876,3 +876,71 @@ class MLPContinuousQNetwork(ContinuousQNetwork):
         if actions.dim() > 2:
             actions = actions.reshape(actions.shape[0], -1)
         return self.q_net(torch.cat([obs, actions], dim=-1)).squeeze(-1)
+
+
+class MLPFeatureQNetwork(ContinuousQNetwork):
+    """Continuous-action critic that exposes penultimate-layer features.
+
+    FlashSAC-style training benefits from observing and optionally
+    regularizing critic feature norms. This network keeps the same call
+    signature as :class:`MLPContinuousQNetwork` while adding
+    :meth:`forward_with_features` for algorithms that need those metrics.
+    """
+
+    def __init__(
+        self,
+        obs_space: spaces.Space,
+        action_space: spaces.Box,
+        cfg: dict[str, Any] | None = None,
+    ):
+        """Initialize the feature-returning continuous Q-network."""
+        super().__init__(obs_space, action_space, cfg)
+        cfg = cfg or {}
+        hidden_dims = cfg.get("hidden_dims", [512, 512, 512, 512])
+        activation = cfg.get("activation", "elu")
+        layer_norm = cfg.get("layer_norm", True)
+
+        obs_dim = _obs_space_numel(obs_space)
+        input_dim = obs_dim + self.action_dim
+        if not hidden_dims:
+            raise ValueError("MLPFeatureQNetwork requires at least one hidden layer")
+
+        self.encoder = build_mlp(
+            input_dim=input_dim,
+            hidden_dims=hidden_dims[:-1],
+            output_dim=hidden_dims[-1],
+            activation=activation,
+            layer_norm=layer_norm,
+        )
+        self.q_head = nn.Linear(hidden_dims[-1], 1)
+        _init_q_network(self, self.q_head)
+
+    def _concat_inputs(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Flatten observations and concatenate actions."""
+        obs = flatten_observation(obs)
+        if actions.dim() > 2:
+            actions = actions.reshape(actions.shape[0], -1)
+        return torch.cat([obs, actions], dim=-1)
+
+    def forward_with_features(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return Q estimates and penultimate critic features."""
+        features = self.encoder(self._concat_inputs(obs, actions))
+        q_values = self.q_head(features).squeeze(-1)
+        return q_values, features
+
+    def forward(
+        self,
+        obs: torch.Tensor | dict[str, torch.Tensor],
+        actions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return ``Q(s, a)`` estimates with shape ``(batch_size,)``."""
+        q_values, _ = self.forward_with_features(obs, actions)
+        return q_values

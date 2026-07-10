@@ -156,10 +156,12 @@ class OffPolicyRunner:
         """Create algorithm agent based on name."""
         if not self.ALGORITHMS:
             from apexrl.algorithms.dqn import DQN, DQNConfig
+            from apexrl.algorithms.flash_sac import FlashSAC, FlashSACConfig
             from apexrl.algorithms.sac import SAC, SACConfig
             from apexrl.algorithms.td3 import TD3, TD3Config
 
             self.register_algorithm("dqn", DQN, DQNConfig)
+            self.register_algorithm("flash_sac", FlashSAC, FlashSACConfig)
             self.register_algorithm("sac", SAC, SACConfig)
             self.register_algorithm("td3", TD3, TD3Config)
 
@@ -197,7 +199,7 @@ class OffPolicyRunner:
                 log_dir=None,
                 device=device,
             )
-        elif algorithm in {"sac", "td3"}:
+        elif algorithm in {"flash_sac", "sac", "td3"}:
             agent = agent_class(
                 env=env,
                 cfg=cfg,

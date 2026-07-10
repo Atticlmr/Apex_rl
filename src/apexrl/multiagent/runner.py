@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import collections
+import math
 import os
 import time
 from collections.abc import Callable
@@ -129,6 +130,8 @@ class MultiAgentRunner:
             num_iterations=num_iterations,
         )
         transitions_per_iter = self._transitions_per_iteration()
+        start_iteration = self.iteration
+        target_iteration = start_iteration + total_iters
 
         print(
             "Training for "
@@ -152,31 +155,38 @@ class MultiAgentRunner:
         last_stats: dict[str, float] = {}
 
         try:
-            for iteration in range(total_iters):
-                self.iteration = iteration
+            for iteration in range(start_iteration, target_iteration):
                 self.agent.iteration = iteration
                 self._call_callbacks("pre_iteration", self)
                 if hasattr(self.agent, "adjust_learning_rate"):
-                    self.agent.adjust_learning_rate(iteration, total_iters)
+                    self.agent.adjust_learning_rate(iteration, target_iteration)
 
                 rollout_stats = self.collect_rollout()
                 update_stats = self.update()
                 self.total_timesteps = self.agent.total_timesteps
+                self.iteration = iteration + 1
+                self.agent.iteration = self.iteration
                 last_stats = {**rollout_stats, **update_stats}
-                self._update_history(iteration, rollout_stats, update_stats, history)
+                self._update_history(
+                    self.iteration, rollout_stats, update_stats, history
+                )
 
-                if iteration % self.log_interval == 0:
+                if (iteration - start_iteration) % self.log_interval == 0:
                     self._log_iteration(
-                        iteration,
-                        total_iters,
+                        self.iteration,
+                        target_iteration,
                         rollout_stats,
                         update_stats,
                         last_log_time,
                     )
                     last_log_time = time.time()
 
-                if self.save_dir and iteration % self.save_interval == 0:
-                    self.save_checkpoint(f"checkpoint_{iteration}.pt")
+                if (
+                    self.save_dir
+                    and self.save_interval > 0
+                    and self.iteration % self.save_interval == 0
+                ):
+                    self.save_checkpoint(f"checkpoint_{self.iteration}.pt")
                 self._call_callbacks("post_iteration", self, last_stats)
         except KeyboardInterrupt:
             print("\nTraining interrupted by user")
@@ -278,11 +288,12 @@ class MultiAgentRunner:
     ) -> int:
         """Resolve number of training iterations."""
         if num_iterations is not None:
-            return int(num_iterations)
-        if getattr(self.cfg, "max_iterations", None) is not None:
-            return int(self.cfg.max_iterations)
+            return max(0, int(num_iterations))
         if total_timesteps is not None:
-            return max(1, int(total_timesteps) // self._transitions_per_iteration())
+            remaining_timesteps = max(0, int(total_timesteps) - self.total_timesteps)
+            return math.ceil(remaining_timesteps / self._transitions_per_iteration())
+        if getattr(self.cfg, "max_iterations", None) is not None:
+            return max(0, int(self.cfg.max_iterations) - self.iteration)
         raise ValueError(
             "Provide total_timesteps, num_iterations or cfg.max_iterations"
         )
