@@ -185,7 +185,7 @@ def test_on_policy_runner_smoke_cartpole():
     )
 
     result = runner.learn(num_iterations=1)
-    assert result["final_iteration"] == 0
+    assert result["final_iteration"] == 1
     assert result["total_timesteps"] == cfg.num_steps * env.num_envs
     runner.close()
 
@@ -344,9 +344,57 @@ def test_on_policy_runner_can_create_recurrent_ppo():
     )
 
     result = runner.learn(num_iterations=1)
-    assert result["final_iteration"] == 0
+    assert result["final_iteration"] == 1
     assert result["total_timesteps"] == cfg.num_steps * env.num_envs
     runner.close()
+
+
+def test_on_policy_runner_rounds_up_timesteps_and_resumes_iterations(tmp_path):
+    """PPO should meet timestep targets and continue completed iteration counts."""
+    env = GymVecEnv(
+        [lambda: gym.make("CartPole-v1") for _ in range(2)],
+        device="cpu",
+    )
+    cfg = PPOConfig(
+        num_steps=8,
+        num_epochs=1,
+        minibatch_size=8,
+        learning_rate_schedule="constant",
+        save_interval=1,
+        device="cpu",
+    )
+    runner = OnPolicyRunner(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPDiscreteActor,
+        critic_class=MLPCritic,
+        save_dir=str(tmp_path),
+    )
+
+    first_result = runner.learn(total_timesteps=1)
+    assert first_result["total_timesteps"] == cfg.num_steps * env.num_envs
+    assert first_result["final_iteration"] == 1
+    assert (tmp_path / "checkpoint_1.pt").exists()
+
+    resumed_env = GymVecEnv(
+        [lambda: gym.make("CartPole-v1") for _ in range(2)],
+        device="cpu",
+    )
+    resumed_runner = OnPolicyRunner(
+        env=resumed_env,
+        cfg=cfg,
+        actor_class=MLPDiscreteActor,
+        critic_class=MLPCritic,
+        save_dir=str(tmp_path),
+    )
+    resumed_runner.load_checkpoint("checkpoint_1.pt")
+    resumed_result = resumed_runner.learn(num_iterations=1)
+
+    assert resumed_result["final_iteration"] == 2
+    assert resumed_result["total_timesteps"] == 2 * cfg.num_steps * env.num_envs
+    assert (tmp_path / "checkpoint_2.pt").exists()
+    runner.close()
+    resumed_runner.close()
 
 
 def test_gru_actor_single_step_call_keeps_deterministic_keyword():

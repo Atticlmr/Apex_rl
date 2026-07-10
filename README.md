@@ -78,9 +78,14 @@ Core runtime dependencies:
 | Algorithm | Status | Notes |
 | --- | --- | --- |
 | PPO | ✅ Available | `OnPolicyRunner`, discrete + continuous actions, asymmetric actor-critic |
+| Recurrent PPO | ✅ Available | GRU actor/critic support with sequence minibatches and hidden-state carryover |
 | DQN | ✅ Available | `OffPolicyRunner`, Double DQN, Dueling DQN |
 | SAC | ✅ Available | `OffPolicyRunner`, squashed Gaussian actor, twin critics |
+| TD3 | ✅ Available | deterministic bounded actor, delayed policy updates, target policy smoothing |
 | FlashSAC | ✅ Available | high-throughput SAC variant with large-batch defaults and critic norm controls |
+| MAPPO | ✅ Available | centralized critic, shared or independent actor/critic networks |
+| IPPO | ✅ Available | decentralized per-agent critics from local observations |
+| HAPPO | ✅ Available | sequential per-agent policy updates with independent actors |
 
 ## What Changed In Current Version
 
@@ -117,6 +122,7 @@ Current behavior:
 - Env wrappers and buffers preserve the original dtype of each observation leaf, including raw `uint8` image branches and non-floating leaves in structured observations.
 - Default MLP-based models still flatten structured observations into `float32` feature tensors internally, so existing vector-style training flows continue to work.
 - Custom multimodal encoders receive the original per-leaf dtypes and can apply dtype-specific preprocessing explicitly inside the model.
+- On-policy runners round requested timestep targets up to complete rollouts and preserve global iteration counters when resuming from checkpoints.
 
 ## Quick Start
 
@@ -356,7 +362,7 @@ runner = OnPolicyRunner(
 Run the lightweight benchmark suite with:
 
 ```bash
-/Users/air/workspace/abc/bin/python benchmarks/run_smoke_benchmarks.py --iterations 1 --num-envs 1
+python benchmarks/run_smoke_benchmarks.py --iterations 1 --num-envs 1
 ```
 
 Current smoke tasks:
@@ -377,7 +383,8 @@ Planned algorithm work for upcoming versions:
 
 - AMP
 - Policy distillation
-- RNN support for PPO, Multi-agent algorithm
+- Recurrent-network support for multi-agent algorithms
+- JAX backend support
 
 ## License
 

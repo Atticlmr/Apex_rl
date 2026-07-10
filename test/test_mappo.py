@@ -233,7 +233,7 @@ def test_mappo_collect_update_and_learn_smoke(tmp_path):
     agent.load(str(checkpoint))
 
     result = agent.learn(num_iterations=1)
-    assert result["final_iteration"] == 0
+    assert result["final_iteration"] == 1
     expected_timesteps = cfg.num_steps * env.num_envs * len(env.possible_agents) * 2
     assert result["total_timesteps"] == expected_timesteps
     assert len(agent.episode_rewards) > 0
@@ -392,9 +392,66 @@ def test_multiagent_runner_logs_and_checkpoints(tmp_path):
 
     result = runner.learn(num_iterations=1)
 
-    assert result["final_iteration"] == 0
-    assert (tmp_path / "ckpts" / "checkpoint_0.pt").exists()
+    assert result["final_iteration"] == 1
+    assert (tmp_path / "ckpts" / "checkpoint_1.pt").exists()
     assert (tmp_path / "ckpts" / "checkpoint_final.pt").exists()
     event_files = list((tmp_path / "logs").rglob("events.out.tfevents.*"))
     assert event_files
     assert not runner.log_buffers["/extra/log/payload_error"]
+
+
+def test_multiagent_runner_rounds_up_timesteps_and_resumes_iterations(tmp_path):
+    """Multi-agent training should meet targets and continue iteration counts."""
+    env = DummyDroneTransportVecEnv(num_envs=2, num_agents=2)
+    cfg = MAPPOConfig(
+        num_steps=4,
+        num_epochs=1,
+        minibatch_size=4,
+        actor_hidden_dims=[16],
+        critic_hidden_dims=[16],
+        learning_rate_schedule="constant",
+        save_interval=1,
+        device="cpu",
+    )
+    agent = MAPPO(
+        env=env,
+        cfg=cfg,
+        actor_class=MLPActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+    runner = MultiAgentRunner(
+        env=env,
+        agent=agent,
+        cfg=cfg,
+        save_dir=str(tmp_path),
+        device=torch.device("cpu"),
+    )
+
+    first_result = runner.learn(total_timesteps=1)
+    transitions_per_iteration = cfg.num_steps * env.num_envs * len(env.possible_agents)
+    assert first_result["total_timesteps"] == transitions_per_iteration
+    assert first_result["final_iteration"] == 1
+    assert (tmp_path / "checkpoint_1.pt").exists()
+
+    resumed_env = DummyDroneTransportVecEnv(num_envs=2, num_agents=2)
+    resumed_agent = MAPPO(
+        env=resumed_env,
+        cfg=cfg,
+        actor_class=MLPActor,
+        critic_class=MLPCritic,
+        device=torch.device("cpu"),
+    )
+    resumed_runner = MultiAgentRunner(
+        env=resumed_env,
+        agent=resumed_agent,
+        cfg=cfg,
+        save_dir=str(tmp_path),
+        device=torch.device("cpu"),
+    )
+    resumed_runner.load_checkpoint(str(tmp_path / "checkpoint_1.pt"))
+    resumed_result = resumed_runner.learn(num_iterations=1)
+
+    assert resumed_result["final_iteration"] == 2
+    assert resumed_result["total_timesteps"] == 2 * transitions_per_iteration
+    assert (tmp_path / "checkpoint_2.pt").exists()
