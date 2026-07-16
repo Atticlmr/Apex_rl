@@ -2,7 +2,7 @@
   <img src="assets/logo-horizontal.svg" alt="ApexRL logo" width="520">
 </p>
 
-# Apex_rl
+# Apex_rl(Dev Branch, desprated)
 
 A reinforcement learning library focused on pragmatic, extensible training loops.
 
