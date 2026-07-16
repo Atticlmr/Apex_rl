@@ -87,6 +87,26 @@ Core runtime dependencies:
 | IPPO | ✅ Available | decentralized per-agent critics from local observations |
 | HAPPO | ✅ Available | sequential per-agent policy updates with independent actors |
 
+### FlashSAC implementation
+
+The default FlashSAC path follows the
+[public reference implementation](https://github.com/Holiday-Robot/FlashSAC)'s
+core algorithmic design rather than only reusing SAC with larger hidden layers:
+
+- residual actor and critic blocks with BatchNorm and post RMSNorm
+- unit-row weight projection after optimizer steps
+- twin categorical critics with entropy-regularized Bellman projection
+- delayed actor and temperature updates
+- discounted-return reward normalization with bounded normalized returns
+- truncated-zeta noise repetition for temporally coherent exploration
+- target entropy derived from a unified target policy standard deviation
+
+The implementation remains integrated with ApexRL's structured observations,
+asymmetric critics, replay buffers, runners, logging, and single-file
+checkpoints. N-step replay, AMP, and compiled update kernels remain future
+performance work; they do not change the default critic objective described
+above.
+
 ## What Changed In Current Version
 
 The current repository version supports structured observations end to end:

@@ -15,5 +15,14 @@
 
 from apexrl.algorithms.flash_sac.config import FlashSACConfig
 from apexrl.algorithms.flash_sac.flash_sac import FlashSAC
+from apexrl.algorithms.flash_sac.network import (
+    FlashSACActor,
+    FlashSACCategoricalQNetwork,
+)
 
-__all__ = ["FlashSAC", "FlashSACConfig"]
+__all__ = [
+    "FlashSAC",
+    "FlashSACActor",
+    "FlashSACCategoricalQNetwork",
+    "FlashSACConfig",
+]
