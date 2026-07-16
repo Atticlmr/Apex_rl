@@ -387,12 +387,16 @@ class OffPolicyRunner:
                         observation_index(final_obs, dones),
                     )
 
+                transition_kwargs = {}
+                if getattr(self.agent, "accepts_episode_ends", False):
+                    transition_kwargs["episode_ends"] = dones.float()
                 self.agent.store_transition(
                     observations=obs,
                     actions=actions,
                     rewards=rewards,
                     next_observations=next_obs_for_buffer,
                     dones=terminated.float(),
+                    **transition_kwargs,
                 )
 
                 self.current_episode_rewards += rewards
